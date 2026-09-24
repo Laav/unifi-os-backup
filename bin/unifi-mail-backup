@@ -151,16 +151,47 @@ p=pathlib.Path(source)
 st=p.stat()
 when=datetime.datetime.fromtimestamp(st.st_mtime).astimezone()
 def esc(v): return html.escape(str(v),quote=True)
-body=("<html><body><h2>UniFi OS backup successful</h2><table>"
-      f"<tr><td><b>Host</b></td><td>{esc(host)}</td></tr>"
-      f"<tr><td><b>UniFi server</b></td><td>{esc(server)}</td></tr>"
-      f"<tr><td><b>File</b></td><td>{esc(p.name)}</td></tr>"
-      f"<tr><td><b>Date</b></td><td>{esc(when.strftime('%Y-%m-%d'))}</td></tr>"
-      f"<tr><td><b>Time</b></td><td>{esc(when.strftime('%H:%M:%S %Z'))}</td></tr>"
-      f"<tr><td><b>Size</b></td><td>{st.st_size} bytes</td></tr>"
-      f"<tr><td><b>SHA256</b></td><td><code>{esc(sha)}</code></td></tr>"
-      "</table></body></html>")
-payload={"message":{"subject":f"UniFi OS backup successful - {host}",
+def format_size(value):
+    if value < 1024:
+        return f"{value:,} bytes"
+    if value < 1024**2:
+        return f"{value / 1024:.1f} KiB ({value:,} bytes)"
+    if value < 1024**3:
+        return f"{value / 1024**2:.1f} MiB ({value:,} bytes)"
+    return f"{value / 1024**3:.1f} GiB ({value:,} bytes)"
+
+# Table-based layout and inline styles keep the message predictable in Outlook
+# desktop, Outlook on the web, and other clients with restricted CSS support.
+body=("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head>"
+      "<body style=\"margin:0;padding:0;background-color:#f4f6f8;color:#1f2937;font-family:Arial,Helvetica,sans-serif;\">"
+      "<div style=\"display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;\">"
+      "UniFi OS system backup completed successfully and is attached.</div>"
+      "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#f4f6f8;\">"
+      "<tr><td align=\"center\" style=\"padding:32px 12px;\">"
+      "<table role=\"presentation\" width=\"620\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"width:100%;max-width:620px;background-color:#ffffff;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,0.08);\">"
+      "<tr><td style=\"padding:28px 32px;background-color:#111827;color:#ffffff;border-radius:12px 12px 0 0;\">"
+      "<div style=\"font-size:13px;line-height:19px;letter-spacing:1.5px;color:#9ca3af;text-transform:uppercase;\">Automated system backup</div>"
+      "<div style=\"margin-top:8px;font-size:26px;line-height:32px;font-weight:700;color:#ffffff;\">UniFi OS Backup</div>"
+      f"<div style=\"margin-top:10px;font-size:14px;line-height:20px;color:#d1d5db;word-break:break-word;\">{esc(host)}</div>"
+      "</td></tr>"
+      "<tr><td style=\"padding:30px 32px;\">"
+      "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin-bottom:26px;background-color:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;\">"
+      "<tr><td style=\"padding:16px 18px;font-size:15px;line-height:22px;font-weight:700;color:#065f46;\">Backup completed successfully and is ready for secure storage</td></tr></table>"
+      "<div style=\"margin-bottom:16px;font-size:18px;line-height:24px;font-weight:700;color:#1f2937;\">Backup details</div>"
+      "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin-bottom:26px;border-collapse:collapse;font-size:14px;\">"
+      f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">File</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;font-weight:700;color:#1f2937;word-break:break-all;\">{esc(p.name)}</td></tr>"
+      f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">UniFi server</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;word-break:break-word;\">{esc(server)}</td></tr>"
+      f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Date</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(when.strftime('%Y-%m-%d'))}</td></tr>"
+      f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Time</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(when.strftime('%H:%M:%S %Z'))}</td></tr>"
+      f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Size</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(format_size(st.st_size))}</td></tr>"
+      "</table>"
+      "<div style=\"margin-bottom:12px;font-size:18px;line-height:24px;font-weight:700;color:#1f2937;\">Integrity check</div>"
+      f"<div style=\"margin-bottom:28px;padding:14px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:19px;color:#374151;word-break:break-all;\"><strong>SHA256</strong><br>{esc(sha)}</div>"
+      "<div style=\"font-size:14px;line-height:24px;color:#4b5563;\">The complete UniFi OS System Backup is attached as a <strong>.unifi file</strong>. Store the attachment in accordance with your backup and data-protection policy.</div>"
+      "</td></tr>"
+      f"<tr><td style=\"padding:20px 32px;background-color:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 12px 12px;font-size:12px;line-height:19px;color:#6b7280;\">This message was generated automatically by the UniFi backup service on {esc(host)}. No reply is required.</td></tr>"
+      "</table></td></tr></table></body></html>")
+payload={"message":{"subject":f"[Success] UniFi OS backup - {host}",
   "body":{"contentType":"HTML","content":body},
   "toRecipients":[{"emailAddress":{"address":recipient}}],
   "attachments":[{"@odata.type":"#microsoft.graph.fileAttachment","name":p.name,

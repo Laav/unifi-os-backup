@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+output_file=""
+data_source=""
+url=""
+
+while (($#)); do
+  case "$1" in
+    --output) output_file=$2; shift 2 ;;
+    --data-binary) data_source=$2; shift 2 ;;
+    --write-out|--connect-timeout|--max-time|--header) shift 2 ;;
+    --silent|--show-error) shift ;;
+    http*) url=$1; shift ;;
+    *) echo "mock-graph-curl: unexpected argument: $1" >&2; exit 64 ;;
+  esac
+done
+
+case "$url" in
+  https://login.microsoftonline.com/*/oauth2/v2.0/token)
+    [[ $data_source == "@-" ]] || { echo "mock-graph-curl: token form was not streamed" >&2; exit 65; }
+    form=$(</dev/stdin)
+    python3 - "$form" <<'PY'
+import sys, urllib.parse
+values = urllib.parse.parse_qs(sys.argv[1], strict_parsing=True)
+assert values["grant_type"] == ["client_credentials"]
+assert values["scope"] == ["https://graph.microsoft.com/.default"]
+assert values["client_secret"] == ["test-only-secret"]
+PY
+    printf '{"access_token":"mock-graph-access-token"}' > "$output_file"
+    printf '200'
+    ;;
+  https://graph.microsoft.com/v1.0/users/*/sendMail)
+    [[ $data_source == @* ]] || { echo "mock-graph-curl: payload was not read from a file" >&2; exit 65; }
+    [[ -n ${MOCK_GRAPH_PAYLOAD_CAPTURE:-} ]] || { echo "mock-graph-curl: capture path is missing" >&2; exit 65; }
+    cp -- "${data_source#@}" "$MOCK_GRAPH_PAYLOAD_CAPTURE"
+    : > "$output_file"
+    printf '202'
+    ;;
+  *) echo "mock-graph-curl: unexpected URL: $url" >&2; exit 64 ;;
+esac

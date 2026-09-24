@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ ${1:-} == "-f" || $# -eq 0 ]] || exit 64
+printf 'mail-template-test\n'

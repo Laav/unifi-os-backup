@@ -4,6 +4,10 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+### Changed
+
+- Reworked the success email as a minimal, table-based HTML layout for predictable rendering in Outlook and other mail clients.
+
 ## [1.0.0] - 2026-09-24
 
 ### Added
