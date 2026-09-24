@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+PROGRAM="unifi-mail-backup"
+CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
+GRAPH_CONFIG_FILE="/etc/unifi-backup/graph.env"
+GRAPH_CONFIG_OVERRIDE=""
+
+usage() { echo "Usage: unifi-mail-backup [--config FILE] [--graph-config FILE] BACKUP.unifi"; }
+while (($#)); do
+  case "$1" in
+    --config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; CONFIG_FILE=$2; shift 2 ;;
+    --graph-config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; GRAPH_CONFIG_OVERRIDE=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    --*) echo "$PROGRAM: unknown option: $1" >&2; exit 64 ;;
+    *) [[ -z ${BACKUP_FILE:-} ]] || { usage >&2; exit 64; }; BACKUP_FILE=$1; shift ;;
+  esac
+done
+: "${BACKUP_FILE:=}"
+
+log() { printf '%s: %s\n' "$PROGRAM" "$*"; }
+die() { local message=$1 code=${2:-1}; printf '%s: ERROR: %s\n' "$PROGRAM" "$message" >&2; exit "$code"; }
+is_positive_int() { [[ $1 =~ ^[1-9][0-9]*$ ]]; }
+describe_curl_error() {
+  case "$1" in
+    5|6) echo "DNS resolution failed" ;;
+    7) echo "connection failed" ;;
+    28) echo "operation timed out" ;;
+    35|51|58|59|60|64|66|77|80|82|83|90|91) echo "TLS/certificate validation failed" ;;
+    *) echo "curl transport error $1" ;;
+  esac
+}
+
+check_secret_file() {
+  local file=$1 mode owner expected=$EUID config_dir dir_mode dir_owner
+  [[ $file == /* ]] || die "Configuration path must be absolute: $file" 78
+  [[ -f $file ]] || die "Configuration file not found: $file" 78
+  [[ ! -L $file ]] || die "Configuration file may not be a symbolic link: $file" 78
+  mode=$(stat -c '%a' "$file")
+  owner=$(stat -c '%u' "$file")
+  (( EUID == 0 )) && expected=0
+  [[ $owner == "$expected" ]] || die "$file must be owned by UID $expected" 78
+  (( (8#$mode & 8#077) == 0 )) || die "$file must have no group/other permissions (use chmod 0600)" 78
+  config_dir=${file%/*}
+  [[ ! -L $config_dir ]] || die "Configuration directory may not be a symbolic link: $config_dir" 78
+  dir_mode=$(stat -c '%a' "$config_dir")
+  dir_owner=$(stat -c '%u' "$config_dir")
+  [[ $dir_owner == "$expected" ]] || die "$config_dir must be owned by UID $expected" 78
+  (( (8#$dir_mode & 8#077) == 0 )) || die "$config_dir must have no group/other permissions (use chmod 0700)" 78
+}
+
+for command_name in curl python3 stat sha256sum hostname; do
+  command -v "$command_name" >/dev/null 2>&1 || die "Required command not found: $command_name" 69
+done
+check_secret_file "$CONFIG_FILE"
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+GRAPH_CONFIG_FILE=${GRAPH_CONFIG_OVERRIDE:-${GRAPH_CONFIG_FILE:-/etc/unifi-backup/graph.env}}
+check_secret_file "$GRAPH_CONFIG_FILE"
+# shellcheck disable=SC1090
+source "$GRAPH_CONFIG_FILE"
+
+: "${TENANT_ID:=}" "${CLIENT_ID:=}" "${CLIENT_SECRET:=}" "${MAIL_FROM:=}" "${MAIL_TO:=}"
+: "${GRAPH_AUTH_METHOD:=client_secret}"
+: "${GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES:=2800000}"
+: "${CURL_CONNECT_TIMEOUT:=15}" "${CURL_MAX_TIME:=1800}" "${UNIFI_URL:=unknown}"
+: "${BACKUP_DIR:=/var/backups/unifi}"
+
+[[ $BACKUP_DIR == /* && $BACKUP_DIR != "/" ]] || die "BACKUP_DIR must be an absolute, non-root path" 78
+BACKUP_DIR=${BACKUP_DIR%/}
+[[ -d $BACKUP_DIR && ! -L $BACKUP_DIR ]] || die "BACKUP_DIR must be a real directory, not a symbolic link" 66
+[[ $BACKUP_FILE == /* && ${BACKUP_FILE%/*} == "$BACKUP_DIR" ]] || die "Backup file must be directly inside BACKUP_DIR" 66
+[[ -f $BACKUP_FILE && -r $BACKUP_FILE && -s $BACKUP_FILE && ! -L $BACKUP_FILE ]] || die "Backup file is missing, empty, unreadable, or a symbolic link: $BACKUP_FILE" 66
+[[ ${BACKUP_FILE##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi$ ]] || die "Backup filename does not match the managed backup pattern" 65
+backup_mode=$(stat -c '%a' "$BACKUP_FILE")
+backup_owner=$(stat -c '%u' "$BACKUP_FILE")
+expected_owner=$EUID
+(( EUID == 0 )) && expected_owner=0
+[[ $backup_owner == "$expected_owner" ]] || die "Backup file must be owned by UID $expected_owner" 66
+(( (8#$backup_mode & 8#077) == 0 )) || die "Backup file must not be accessible by group or others" 66
+for required_name in TENANT_ID CLIENT_ID CLIENT_SECRET MAIL_FROM MAIL_TO; do
+  [[ -n ${!required_name} ]] || die "$required_name is required in $GRAPH_CONFIG_FILE" 78
+  [[ ${!required_name} != "CHANGE_ME" ]] || die "Replace placeholder $required_name" 78
+done
+[[ $GRAPH_AUTH_METHOD == "client_secret" ]] || die "Unsupported GRAPH_AUTH_METHOD '$GRAPH_AUTH_METHOD'; certificate authentication is a planned extension point, not yet implemented" 78
+[[ $TENANT_ID =~ ^[0-9A-Za-z._-]+$ ]] || die "TENANT_ID contains invalid characters" 78
+is_positive_int "$GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES" || die "GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES must be a positive integer" 78
+(( GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES <= 3000000 )) || die "GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES may not exceed 3000000" 78
+is_positive_int "$CURL_CONNECT_TIMEOUT" || die "CURL_CONNECT_TIMEOUT must be a positive integer" 78
+is_positive_int "$CURL_MAX_TIME" || die "CURL_MAX_TIME must be a positive integer" 78
+(( CURL_MAX_TIME >= CURL_CONNECT_TIMEOUT )) || die "CURL_MAX_TIME must be at least CURL_CONNECT_TIMEOUT" 78
+
+backup_size=$(stat -c '%s' "$BACKUP_FILE")
+if (( backup_size >= GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES )); then
+  die "Backup is $backup_size bytes, too large for this simple Graph sendMail attachment path (limit is strictly below $GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES bytes). Local backup retained; use secure external storage or implement a reviewed draft/upload-session workflow with Mail.ReadWrite." 75
+fi
+
+tmp_token_response=$(mktemp "${TMPDIR:-/tmp}/unifi-graph-token.XXXXXX")
+tmp_auth_header=$(mktemp "${TMPDIR:-/tmp}/unifi-graph-header.XXXXXX")
+tmp_payload=$(mktemp "${TMPDIR:-/tmp}/unifi-graph-payload.XXXXXX")
+tmp_graph_response=$(mktemp "${TMPDIR:-/tmp}/unifi-graph-response.XXXXXX")
+cleanup() { local rc=$?; rm -f -- "$tmp_token_response" "$tmp_auth_header" "$tmp_payload" "$tmp_graph_response"; exit "$rc"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+generate_token_form() {
+  printf '%s\0%s' "$CLIENT_ID" "$CLIENT_SECRET" |
+    python3 -c 'import sys,urllib.parse; b=sys.stdin.buffer.read().split(b"\0",1); print(urllib.parse.urlencode({"client_id":b[0].decode(),"client_secret":b[1].decode(),"scope":"https://graph.microsoft.com/.default","grant_type":"client_credentials"}),end="")'
+}
+
+token_url="https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
+log "Requesting Microsoft Graph application token"
+if token_http=$(generate_token_form | curl --silent --show-error \
+    --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time 60 \
+    --header 'Content-Type: application/x-www-form-urlencoded' --data-binary @- \
+    --output "$tmp_token_response" --write-out '%{http_code}' "$token_url"); then :; else
+  rc=$?; die "Graph token transport failed: $(describe_curl_error "$rc")" 69
+fi
+[[ $token_http =~ ^2[0-9][0-9]$ ]] || {
+  graph_error=$(python3 - "$tmp_token_response" <<'PY'
+import json,sys
+try:
+    d=json.load(open(sys.argv[1],encoding="utf-8"))
+    print(str(d.get("error","unknown_error"))[:100]+": "+str(d.get("error_description","token request rejected"))[:300].replace("\n"," "))
+except Exception: print("token request rejected")
+PY
+  )
+  die "Graph token request failed: HTTP $token_http ($graph_error)" 77
+}
+
+python3 - "$tmp_token_response" "$tmp_auth_header" <<'PY'
+import json,os,sys
+try:
+    token=json.load(open(sys.argv[1],encoding="utf-8"))["access_token"]
+except Exception as exc:
+    raise SystemExit("token response did not contain access_token") from exc
+fd=os.open(sys.argv[2],os.O_WRONLY|os.O_TRUNC,0o600)
+with os.fdopen(fd,"w",encoding="ascii") as f: f.write("Authorization: Bearer "+token+"\n")
+PY
+rm -f -- "$tmp_token_response"
+
+host_name=$(hostname -f 2>/dev/null || hostname)
+sha256=$(sha256sum "$BACKUP_FILE" | awk '{print $1}')
+python3 - "$BACKUP_FILE" "$tmp_payload" "$host_name" "$UNIFI_URL" "$MAIL_TO" "$sha256" <<'PY'
+import base64,datetime,html,json,os,pathlib,sys
+source,path_out,host,server,recipient,sha=sys.argv[1:]
+p=pathlib.Path(source)
+st=p.stat()
+when=datetime.datetime.fromtimestamp(st.st_mtime).astimezone()
+def esc(v): return html.escape(str(v),quote=True)
+body=("<html><body><h2>UniFi OS backup successful</h2><table>"
+      f"<tr><td><b>Host</b></td><td>{esc(host)}</td></tr>"
+      f"<tr><td><b>UniFi server</b></td><td>{esc(server)}</td></tr>"
+      f"<tr><td><b>File</b></td><td>{esc(p.name)}</td></tr>"
+      f"<tr><td><b>Date</b></td><td>{esc(when.strftime('%Y-%m-%d'))}</td></tr>"
+      f"<tr><td><b>Time</b></td><td>{esc(when.strftime('%H:%M:%S %Z'))}</td></tr>"
+      f"<tr><td><b>Size</b></td><td>{st.st_size} bytes</td></tr>"
+      f"<tr><td><b>SHA256</b></td><td><code>{esc(sha)}</code></td></tr>"
+      "</table></body></html>")
+payload={"message":{"subject":f"UniFi OS backup successful - {host}",
+  "body":{"contentType":"HTML","content":body},
+  "toRecipients":[{"emailAddress":{"address":recipient}}],
+  "attachments":[{"@odata.type":"#microsoft.graph.fileAttachment","name":p.name,
+                  "contentType":"application/octet-stream",
+                  "contentBytes":base64.b64encode(p.read_bytes()).decode("ascii")}]
+ }}
+with open(path_out,"w",encoding="utf-8") as f: json.dump(payload,f,separators=(",",":"),ensure_ascii=False)
+os.chmod(path_out,0o600)
+PY
+
+mailbox_path=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""),end="")' "$MAIL_FROM")
+send_url="https://graph.microsoft.com/v1.0/users/$mailbox_path/sendMail"
+log "Sending backup email through Microsoft Graph"
+if send_http=$(curl --silent --show-error --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" \
+    --header "@$tmp_auth_header" --header 'Content-Type: application/json' \
+    --data-binary "@$tmp_payload" --output "$tmp_graph_response" --write-out '%{http_code}' "$send_url"); then :; else
+  rc=$?; die "Graph sendMail transport failed: $(describe_curl_error "$rc"); local backup retained" 69
+fi
+rm -f -- "$tmp_auth_header" "$tmp_payload"
+[[ $send_http == "202" ]] || {
+  graph_error=$(python3 - "$tmp_graph_response" <<'PY'
+import json,sys
+try:
+    e=json.load(open(sys.argv[1],encoding="utf-8")).get("error",{})
+    print(str(e.get("code","unknown_error"))[:100]+": "+str(e.get("message","sendMail rejected"))[:300].replace("\n"," "))
+except Exception: print("sendMail rejected")
+PY
+  )
+  die "Graph sendMail failed: HTTP $send_http ($graph_error); local backup retained" 75
+}
+log "Microsoft Graph accepted the message (HTTP 202)"

@@ -1,0 +1,32 @@
+# Real configuration and credentials
+.env
+.env.*
+*.env
+!config/*.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*
+secrets*
+
+# Backups, hashes and transient data
+*.unifi
+*.sha256
+*.tmp
+*.part
+*.cookie
+*.headers
+*.lock
+backups/
+cache/
+
+# Editors, operating systems and test output
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+coverage/
+test-results/

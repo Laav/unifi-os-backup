@@ -1,0 +1,15 @@
+[Unit]
+Description=Weekly UniFi OS system backup
+Documentation=https://github.com/Laav/unifi-os-backup
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+Unit=unifi-backup.service
+
+# No randomized delay by default: a single local server creates no fleet-level
+# thundering herd and 03:00 remains predictable. Add RandomizedDelaySec in a
+# local timer override when deploying this repository to many hosts.
+
+[Install]
+WantedBy=timers.target

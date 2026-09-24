@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+cookie_jar=""
+header_file=""
+output_file=""
+url=""
+read_stdin=false
+
+while (($#)); do
+  case "$1" in
+    --cookie-jar) cookie_jar=$2; shift 2 ;;
+    --dump-header) header_file=$2; shift 2 ;;
+    --output) output_file=$2; shift 2 ;;
+    --data-binary) [[ $2 == "@-" ]] && read_stdin=true; shift 2 ;;
+    --write-out|--connect-timeout|--max-time|--request|--header|--cookie|--cacert) shift 2 ;;
+    --silent|--show-error) shift ;;
+    http*) url=$1; shift ;;
+    *) echo "mock-curl: unexpected argument: $1" >&2; exit 64 ;;
+  esac
+done
+
+body=""
+if [[ $read_stdin == "true" ]]; then body=$(</dev/stdin); fi
+case "$url" in
+  */api/auth/login)
+    python3 -c 'import json,os,sys; d=json.load(sys.stdin); assert d=={"username":"uni-bck","password":os.environ["MOCK_EXPECTED_PASSWORD"]}' <<<"$body"
+    if [[ ${MOCK_CURL_MODE:-success} == "login401" ]]; then
+      printf 'HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n' > "$header_file"
+      printf '{"error":"unauthorized"}' > "$output_file"
+      printf '401'
+      exit 0
+    fi
+    printf '# Netscape HTTP Cookie File\n#HttpOnly_127.0.0.1\tFALSE\t/\tTRUE\t2147483647\tTOKEN\tmock-token-secret\n' > "$cookie_jar"
+    printf 'HTTP/1.1 200 OK\r\nx-csrf-token: mock-csrf-secret\r\nContent-Type: application/json\r\n\r\n' > "$header_file"
+    printf '{}' > "$output_file"
+    printf '200'
+    ;;
+  */api/backup/download)
+    if [[ ${MOCK_CURL_MODE:-success} == "html" ]]; then
+      printf 'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n' > "$header_file"
+      python3 -c 'import sys; open(sys.argv[1],"wb").write(b"<!doctype html><html>login</html>" + b"x"*12000)' "$output_file"
+    else
+      printf 'HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n' > "$header_file"
+      python3 -c 'import sys; open(sys.argv[1],"wb").write(b"UNIFI-BINARY\0" + b"x"*12000)' "$output_file"
+    fi
+    printf '200'
+    ;;
+  */api/auth/logout)
+    : > "$output_file"
+    ;;
+  *) echo "mock-curl: unexpected URL: $url" >&2; exit 64 ;;
+esac

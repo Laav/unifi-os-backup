@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    container: ubuntu:${{ matrix.ubuntu }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["22.04", "24.04", "26.04"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static analysis
+        run: apt-get update && apt-get install -y bash curl python3 coreutils findutils util-linux shellcheck systemd
+      - name: Bash tests
+        run: bash tests/run.sh
+      - name: ShellCheck
+        run: shellcheck install.sh update.sh uninstall.sh bin/* tests/*.sh tests/fixtures/mock-*
+      - name: Verify systemd units
+        run: |
+          install -m 0755 bin/unifi-backup /usr/local/sbin/unifi-backup
+          install -d -m 0700 /var/backups/unifi
+          install -m 0644 systemd/unifi-backup.service systemd/unifi-backup.timer /etc/systemd/system/
+          systemd-analyze verify /etc/systemd/system/unifi-backup.service /etc/systemd/system/unifi-backup.timer

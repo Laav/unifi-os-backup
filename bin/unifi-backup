@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+PROGRAM="unifi-backup"
+VERSION="1.0.0"
+CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
+MODE="backup"
+
+usage() {
+  cat <<'EOF'
+Usage: unifi-backup [--config FILE] [--check-only|--validate-config|--retention-only] [--version]
+
+Creates and validates a UniFi OS system backup. Run as root in production.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --config) [[ $# -ge 2 ]] || { echo "--config requires a file" >&2; exit 64; }; CONFIG_FILE=$2; shift 2 ;;
+    --check-only) MODE="check"; shift ;;
+    --validate-config) MODE="validate"; shift ;;
+    --retention-only) MODE="retention"; shift ;;
+    --version) printf '%s %s\n' "$PROGRAM" "$VERSION"; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 64 ;;
+  esac
+done
+
+log() { printf '%s: %s\n' "$PROGRAM" "$*"; }
+warn() { printf '%s: WARNING: %s\n' "$PROGRAM" "$*" >&2; }
+die() { local message=$1 code=${2:-1}; printf '%s: ERROR: %s\n' "$PROGRAM" "$message" >&2; exit "$code"; }
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1" 69
+}
+
+is_positive_int() { [[ $1 =~ ^[1-9][0-9]*$ ]]; }
+
+check_secret_file() {
+  local file=$1 mode owner expected_owner config_dir dir_mode dir_owner
+  [[ $file == /* ]] || die "Configuration path must be absolute: $file" 78
+  [[ -f $file ]] || die "Configuration file not found: $file" 78
+  [[ ! -L $file ]] || die "Configuration file may not be a symbolic link: $file" 78
+  mode=$(stat -c '%a' "$file") || die "Cannot inspect permissions on $file" 78
+  owner=$(stat -c '%u' "$file") || die "Cannot inspect owner of $file" 78
+  expected_owner=$EUID
+  (( EUID == 0 )) && expected_owner=0
+  [[ $owner == "$expected_owner" ]] || die "$file must be owned by UID $expected_owner" 78
+  (( (8#$mode & 8#077) == 0 )) || die "$file must not be accessible by group or others (use chmod 0600)" 78
+  config_dir=${file%/*}
+  [[ ! -L $config_dir ]] || die "Configuration directory may not be a symbolic link: $config_dir" 78
+  dir_mode=$(stat -c '%a' "$config_dir") || die "Cannot inspect configuration directory: $config_dir" 78
+  dir_owner=$(stat -c '%u' "$config_dir") || die "Cannot inspect configuration directory owner: $config_dir" 78
+  [[ $dir_owner == "$expected_owner" ]] || die "$config_dir must be owned by UID $expected_owner" 78
+  (( (8#$dir_mode & 8#077) == 0 )) || die "$config_dir must not be accessible by group or others (use chmod 0700)" 78
+}
+
+check_secret_file "$CONFIG_FILE"
+# The configuration is trusted root-owned shell syntax. It is intentionally kept
+# outside the repository and checked before sourcing.
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+
+: "${UNIFI_URL:=}"
+: "${UNIFI_USERNAME:=uni-bck}"
+: "${UNIFI_PASSWORD:=}"
+: "${BACKUP_DIR:=/var/backups/unifi}"
+: "${RETENTION_DAYS:=35}"
+: "${MIN_BACKUP_SIZE:=10000}"
+: "${CURL_CONNECT_TIMEOUT:=15}"
+: "${CURL_MAX_TIME:=1800}"
+: "${UNIFI_CA_CERT:=}"
+: "${ENABLE_EMAIL:=false}"
+: "${GRAPH_CONFIG_FILE:=/etc/unifi-backup/graph.env}"
+: "${LOCK_FILE:=/run/unifi-backup/unifi-backup.lock}"
+
+validate_config() {
+  [[ -n $UNIFI_URL ]] || die "UNIFI_URL is required" 78
+  [[ $UNIFI_URL =~ ^https://[^/?#@[:space:]]+/?$ ]] || die "UNIFI_URL must be an HTTPS origin without a path, query, fragment, whitespace, or credentials" 78
+  [[ $UNIFI_URL != *"@"* ]] || die "UNIFI_URL must not contain credentials" 78
+  UNIFI_URL=${UNIFI_URL%/}
+  [[ -n $UNIFI_USERNAME ]] || die "UNIFI_USERNAME is required" 78
+  [[ -n $UNIFI_PASSWORD ]] || die "UNIFI_PASSWORD is required" 78
+  [[ $UNIFI_PASSWORD != "CHANGE_ME" ]] || die "Replace the placeholder UNIFI_PASSWORD" 78
+  [[ $BACKUP_DIR == /* && $BACKUP_DIR != "/" ]] || die "BACKUP_DIR must be an absolute, non-root path" 78
+  BACKUP_DIR=${BACKUP_DIR%/}
+  is_positive_int "$RETENTION_DAYS" || die "RETENTION_DAYS must be a positive integer" 78
+  is_positive_int "$MIN_BACKUP_SIZE" || die "MIN_BACKUP_SIZE must be a positive integer" 78
+  is_positive_int "$CURL_CONNECT_TIMEOUT" || die "CURL_CONNECT_TIMEOUT must be a positive integer" 78
+  is_positive_int "$CURL_MAX_TIME" || die "CURL_MAX_TIME must be a positive integer" 78
+  (( CURL_MAX_TIME >= CURL_CONNECT_TIMEOUT )) || die "CURL_MAX_TIME must be at least CURL_CONNECT_TIMEOUT" 78
+  [[ $ENABLE_EMAIL == "true" || $ENABLE_EMAIL == "false" ]] || die "ENABLE_EMAIL must be true or false" 78
+  if [[ -n $UNIFI_CA_CERT ]]; then
+    [[ $UNIFI_CA_CERT == /* && -r $UNIFI_CA_CERT && -f $UNIFI_CA_CERT ]] || die "UNIFI_CA_CERT must name a readable absolute file" 78
+  fi
+  [[ ${LOCK_FILE##*/} =~ ^[A-Za-z0-9._-]+\.lock$ ]] || die "LOCK_FILE must end in a safe .lock filename" 78
+  if [[ ${LOCK_FILE%/*} != "/run/unifi-backup" && ${LOCK_FILE%/*} != "$BACKUP_DIR" ]]; then
+    die "LOCK_FILE must be directly below /run/unifi-backup or BACKUP_DIR" 78
+  fi
+}
+
+validate_config
+for command_name in curl python3 stat; do require_command "$command_name"; done
+
+if [[ $MODE == "validate" ]]; then
+  log "Configuration is valid: $CONFIG_FILE"
+  exit 0
+fi
+
+mkdir -p -- "$BACKUP_DIR"
+[[ ! -L $BACKUP_DIR ]] || die "BACKUP_DIR may not be a symbolic link: $BACKUP_DIR" 73
+chmod 0700 "$BACKUP_DIR"
+[[ -d $BACKUP_DIR && -w $BACKUP_DIR ]] || die "BACKUP_DIR is not a writable directory: $BACKUP_DIR" 73
+
+run_retention() {
+  local candidate deleted=0
+  [[ -n $BACKUP_DIR && $BACKUP_DIR == /* && $BACKUP_DIR != "/" && -d $BACKUP_DIR ]] || die "Unsafe BACKUP_DIR; retention refused" 78
+  is_positive_int "$RETENTION_DAYS" || die "Unsafe RETENTION_DAYS; retention refused" 78
+  while IFS= read -r -d '' candidate; do
+    [[ ${candidate##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi$ ]] || continue
+    log "Removing expired backup: $candidate"
+    rm -f -- "$candidate"
+    ((deleted+=1))
+  done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'unifi_os_backup_*.unifi' -mtime "+$RETENTION_DAYS" -print0)
+  log "Retention complete; removed $deleted expired backup(s)"
+}
+
+if [[ $MODE == "retention" ]]; then
+  require_command find
+  run_retention
+  exit 0
+fi
+
+require_command flock
+mkdir -p -- "${LOCK_FILE%/*}"
+chmod 0700 "${LOCK_FILE%/*}"
+[[ ! -L $LOCK_FILE ]] || die "Refusing symbolic-link lock file: $LOCK_FILE" 73
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  die "Another backup run is already active (lock: $LOCK_FILE)" 75
+fi
+
+tmp_cookie=""
+tmp_login_headers=""
+tmp_login_body=""
+tmp_download_headers=""
+tmp_backup=""
+tmp_csrf_header=""
+
+cleanup() {
+  local rc=$?
+  if [[ -n $tmp_backup && -e $tmp_backup ]]; then rm -f -- "$tmp_backup"; fi
+  if [[ -n $tmp_cookie && -e $tmp_cookie ]]; then
+    # Best-effort server-side logout. Failure must not mask the actual result.
+    if [[ -s $tmp_cookie ]]; then
+      local -a logout_args=(--silent --show-error --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time 30
+        --request POST --cookie "$tmp_cookie" --output /dev/null)
+      [[ -n $UNIFI_CA_CERT ]] && logout_args+=(--cacert "$UNIFI_CA_CERT")
+      [[ -n $tmp_csrf_header && -s $tmp_csrf_header ]] && logout_args+=(--header "@$tmp_csrf_header")
+      curl "${logout_args[@]}" "$UNIFI_URL/api/auth/logout" >/dev/null 2>&1 || true
+    fi
+    rm -f -- "$tmp_cookie"
+  fi
+  [[ -n $tmp_login_headers ]] && rm -f -- "$tmp_login_headers"
+  [[ -n $tmp_login_body ]] && rm -f -- "$tmp_login_body"
+  [[ -n $tmp_download_headers ]] && rm -f -- "$tmp_download_headers"
+  [[ -n $tmp_csrf_header ]] && rm -f -- "$tmp_csrf_header"
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+describe_curl_error() {
+  case "$1" in
+    5|6) echo "DNS resolution failed" ;;
+    7) echo "connection failed" ;;
+    28) echo "operation timed out" ;;
+    35|51|58|59|60|64|66|77|80|82|83|90|91) echo "TLS/certificate validation failed" ;;
+    *) echo "curl transport error $1" ;;
+  esac
+}
+
+describe_http_error() {
+  case "$1" in
+    400) echo "bad request (the controlplane request format may have changed)" ;;
+    401) echo "authentication failed" ;;
+    403) echo "access denied; verify the backup account permissions" ;;
+    404) echo "endpoint not found; the unsupported UniFi OS controlplane API may have changed" ;;
+    429) echo "rate limited by the server" ;;
+    500) echo "UniFi OS internal server error" ;;
+    502|503|504) echo "UniFi OS is temporarily unavailable" ;;
+    *) echo "unexpected HTTP status $1" ;;
+  esac
+}
+
+tmp_cookie=$(mktemp "${TMPDIR:-/tmp}/unifi-backup.cookie.XXXXXX")
+tmp_login_headers=$(mktemp "${TMPDIR:-/tmp}/unifi-backup.login-headers.XXXXXX")
+tmp_login_body=$(mktemp "${TMPDIR:-/tmp}/unifi-backup.login-body.XXXXXX")
+tmp_download_headers=$(mktemp "${TMPDIR:-/tmp}/unifi-backup.download-headers.XXXXXX")
+tmp_csrf_header=$(mktemp "${TMPDIR:-/tmp}/unifi-backup.csrf-header.XXXXXX")
+
+curl_common=(--silent --show-error --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME")
+[[ -n $UNIFI_CA_CERT ]] && curl_common+=(--cacert "$UNIFI_CA_CERT")
+
+generate_login_json() {
+  printf '%s\0%s' "$UNIFI_USERNAME" "$UNIFI_PASSWORD" |
+    python3 -c 'import json,sys; b=sys.stdin.buffer.read().split(b"\0",1); json.dump({"username":b[0].decode(),"password":b[1].decode()},sys.stdout,separators=(",",":"))'
+}
+
+log "Authenticating to UniFi OS controlplane at $UNIFI_URL"
+if login_http=$(generate_login_json | curl "${curl_common[@]}" \
+    --request POST --header 'Content-Type: application/json' --data-binary @- \
+    --cookie-jar "$tmp_cookie" --dump-header "$tmp_login_headers" --output "$tmp_login_body" \
+    --write-out '%{http_code}' "$UNIFI_URL/api/auth/login"); then
+  :
+else
+  curl_rc=$?
+  die "UniFi login transport failure: $(describe_curl_error "$curl_rc")" 69
+fi
+
+[[ $login_http =~ ^2[0-9][0-9]$ ]] || die "UniFi login failed: HTTP $login_http, $(describe_http_error "$login_http")" 77
+if ! awk -F '\t' '{sub(/^#HttpOnly_/,"",$1)} $6 == "TOKEN" {found=1} END {exit !found}' "$tmp_cookie"; then
+  die "Login returned HTTP $login_http but no TOKEN cookie; authentication failed or the controlplane API changed" 77
+fi
+awk 'BEGIN{IGNORECASE=1} /^x-csrf-token:[[:space:]]*/ {sub(/^[^:]*:[[:space:]]*/,""); sub(/\r$/,""); value=$0} END{if (value != "") print "X-CSRF-Token: " value}' "$tmp_login_headers" > "$tmp_csrf_header"
+rm -f -- "$tmp_login_body" "$tmp_login_headers"
+tmp_login_body=""
+tmp_login_headers=""
+log "Authentication succeeded"
+
+if [[ $MODE == "check" ]]; then
+  log "Controlplane login check succeeded; no backup was requested"
+  exit 0
+fi
+
+timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
+final_backup="$BACKUP_DIR/unifi_os_backup_${timestamp}.unifi"
+[[ ! -e $final_backup ]] || die "Refusing to overwrite existing backup: $final_backup" 73
+tmp_backup=$(mktemp "$BACKUP_DIR/.unifi_os_backup_${timestamp}.XXXXXX.tmp")
+
+download_args=("${curl_common[@]}" --cookie "$tmp_cookie" --dump-header "$tmp_download_headers"
+  --output "$tmp_backup" --write-out '%{http_code}')
+[[ -s $tmp_csrf_header ]] && download_args+=(--header "@$tmp_csrf_header")
+
+log "Requesting a new UniFi OS system backup"
+if download_http=$(curl "${download_args[@]}" "$UNIFI_URL/api/backup/download"); then
+  :
+else
+  curl_rc=$?
+  die "Backup download transport failure: $(describe_curl_error "$curl_rc")" 69
+fi
+[[ $download_http =~ ^2[0-9][0-9]$ ]] || die "Backup download failed: HTTP $download_http, $(describe_http_error "$download_http")" 74
+[[ -s $tmp_backup ]] || die "Backup response is empty" 74
+
+backup_size=$(stat -c '%s' "$tmp_backup")
+(( backup_size >= MIN_BACKUP_SIZE )) || die "Backup is too small ($backup_size bytes; minimum $MIN_BACKUP_SIZE)" 74
+
+content_type=$(awk 'BEGIN{IGNORECASE=1} /^content-type:[[:space:]]*/ {sub(/^[^:]*:[[:space:]]*/,""); sub(/\r$/,""); value=tolower($0)} END{print value}' "$tmp_download_headers")
+case "$content_type" in
+  text/html*|application/json*|*+json*) die "Backup endpoint returned an error-like Content-Type: ${content_type:-unknown}" 74 ;;
+  application/octet-stream*|application/x-unifi-backup*|application/zip*|application/gzip*|application/x-gzip*|"") ;;
+  *) warn "Unrecognized backup Content-Type '$content_type'; continuing with size and content validation" ;;
+esac
+
+if ! python3 - "$tmp_backup" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+with p.open("rb") as stream:
+    head = stream.read(4096).lstrip()
+if head.startswith(b"\xef\xbb\xbf"):
+    head = head[3:].lstrip()
+low = head.lower()
+if low.startswith((b"<!doctype html", b"<html", b"<head", b"<body")):
+    raise SystemExit(1)
+if head.startswith((b"{", b"[")):
+    # A System Config Backup is binary. Reject a JSON-looking prefix even when
+    # the captured prefix is not a complete JSON document.
+    raise SystemExit(1)
+PY
+then
+  die "Backup response resembles an HTML login page or JSON error instead of a .unifi backup" 74
+fi
+
+chmod 0600 "$tmp_backup"
+mv -- "$tmp_backup" "$final_backup"
+tmp_backup=""
+sha256=$(sha256sum "$final_backup" | awk '{print $1}')
+require_command find
+log "Backup successful"
+log "File: $final_backup"
+log "Size: $backup_size bytes"
+log "SHA256: $sha256"
+
+run_retention
+
+if [[ $ENABLE_EMAIL == "true" ]]; then
+  mailer="/usr/local/sbin/unifi-mail-backup"
+  [[ -x $mailer ]] || mailer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/unifi-mail-backup"
+  [[ -x $mailer ]] || die "Email is enabled but unifi-mail-backup is not installed" 69
+  if "$mailer" --config "$CONFIG_FILE" --graph-config "$GRAPH_CONFIG_FILE" "$final_backup"; then
+    log "Backup notification email sent"
+  else
+    mail_rc=$?
+    die "Local backup succeeded, but email delivery failed (exit $mail_rc); backup retained at $final_backup" 75
+  fi
+fi
+
+exit 0

@@ -1,0 +1,46 @@
+[Unit]
+Description=Create and validate a UniFi OS system backup
+Documentation=https://github.com/Laav/unifi-os-backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/unifi-backup
+User=root
+Group=root
+UMask=0077
+RuntimeDirectory=unifi-backup
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+
+# The job needs network access, read access to /etc and the host CA store, a
+# private temporary/runtime directory, and write access only to the default
+# backup path. RuntimeDirectory keeps the lock location writable with strict
+# filesystem protection. Preserving it across oneshot exits ensures manual and
+# timer-started runs always contend on the same persistent-until-reboot inode.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/unifi /run/unifi-backup
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+
+# curl's overall maximum is configured separately. This prevents a stuck helper
+# process from keeping the oneshot alive indefinitely.
+TimeoutStartSec=45min
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Git Bash on Windows does not ship util-linux flock. This no-op exists only so
+# the HTTP/content workflow test can run there. Linux CI keeps using real flock.
+[[ ${1:-} == "-n" && ${2:-} =~ ^[0-9]+$ ]] || exit 64
+exit 0
