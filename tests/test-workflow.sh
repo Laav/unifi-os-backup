@@ -52,7 +52,11 @@ fi
 [[ -z $(find "$tmp/backups" -maxdepth 1 -type f \( -name '*.unifi' -o -name '*.tmp' \) -print -quit) ]] || {
   echo "FAIL: failed HTML download left a backup or temporary file" >&2; exit 1;
 }
-grep -q 'error-like Content-Type' "$tmp/html.log"
+grep -q 'error-like Content-Type' "$tmp/html.log" || {
+  echo "FAIL: unexpected HTML-response error" >&2
+  cat "$tmp/html.log" >&2
+  exit 1
+}
 echo "PASS: HTML error response fails closed"
 
 export MOCK_CURL_MODE=login401
@@ -60,7 +64,11 @@ if PATH="$tmp/bin:$PATH" "$root/bin/unifi-backup" --config "$config" > "$tmp/401
   echo "FAIL: HTTP 401 login was accepted" >&2
   exit 1
 fi
-grep -q 'HTTP 401, authentication failed' "$tmp/401.log"
+grep -q 'HTTP 401, authentication failed' "$tmp/401.log" || {
+  echo "FAIL: unexpected authentication error" >&2
+  cat "$tmp/401.log" >&2
+  exit 1
+}
 python3 - "$tmp/401.log" "$password" <<'PY'
 import pathlib,sys
 log=pathlib.Path(sys.argv[1]).read_text()

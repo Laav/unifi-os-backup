@@ -122,7 +122,10 @@ run_retention() {
     log "Removing expired backup: $candidate"
     rm -f -- "$candidate"
     ((deleted+=1))
-  done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'unifi_os_backup_*.unifi' -mtime "+$RETENTION_DAYS" -print0)
+  # Close the lock descriptor in the asynchronous find child. Otherwise that
+  # child can keep the flock alive for a brief moment after the main process
+  # exits, causing an immediate subsequent run to fail spuriously.
+  done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'unifi_os_backup_*.unifi' -mtime "+$RETENTION_DAYS" -print0 9>&-)
   log "Retention complete; removed $deleted expired backup(s)"
 }
 

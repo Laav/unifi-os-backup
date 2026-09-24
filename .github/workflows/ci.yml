@@ -16,7 +16,7 @@ jobs:
       matrix:
         ubuntu: ["22.04", "24.04", "26.04"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install static analysis
         run: apt-get update && apt-get install -y bash curl python3 coreutils findutils util-linux shellcheck systemd
       - name: Bash tests
