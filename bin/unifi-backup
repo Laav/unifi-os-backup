@@ -151,6 +151,9 @@ tmp_download_headers=""
 tmp_backup=""
 tmp_csrf_header=""
 
+# ShellCheck cannot infer invocation through the EXIT trap below. SC2317 is
+# emitted by some releases and SC2329 by newer releases for the same pattern.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   local rc=$?
   if [[ -n $tmp_backup && -e $tmp_backup ]]; then rm -f -- "$tmp_backup"; fi
