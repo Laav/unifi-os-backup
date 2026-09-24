@@ -228,7 +228,7 @@ fi
 if ! awk -F '\t' '{sub(/^#HttpOnly_/,"",$1)} $6 == "TOKEN" {found=1} END {exit !found}' "$tmp_cookie"; then
   die "Login returned HTTP $login_http but no TOKEN cookie; authentication failed or the controlplane API changed" 77
 fi
-awk 'BEGIN{IGNORECASE=1} /^x-csrf-token:[[:space:]]*/ {sub(/^[^:]*:[[:space:]]*/,""); sub(/\r$/,""); value=$0} END{if (value != "") print "X-CSRF-Token: " value}' "$tmp_login_headers" > "$tmp_csrf_header"
+awk 'tolower($0) ~ /^x-csrf-token:[[:space:]]*/ {line=$0; sub(/^[^:]*:[[:space:]]*/,"",line); sub(/\r$/,"",line); value=line} END{if (value != "") print "X-CSRF-Token: " value}' "$tmp_login_headers" > "$tmp_csrf_header"
 rm -f -- "$tmp_login_body" "$tmp_login_headers"
 tmp_login_body=""
 tmp_login_headers=""
@@ -261,7 +261,7 @@ fi
 backup_size=$(stat -c '%s' "$tmp_backup")
 (( backup_size >= MIN_BACKUP_SIZE )) || die "Backup is too small ($backup_size bytes; minimum $MIN_BACKUP_SIZE)" 74
 
-content_type=$(awk 'BEGIN{IGNORECASE=1} /^content-type:[[:space:]]*/ {sub(/^[^:]*:[[:space:]]*/,""); sub(/\r$/,""); value=tolower($0)} END{print value}' "$tmp_download_headers")
+content_type=$(awk 'tolower($0) ~ /^content-type:[[:space:]]*/ {line=$0; sub(/^[^:]*:[[:space:]]*/,"",line); sub(/\r$/,"",line); value=tolower(line)} END{print value}' "$tmp_download_headers")
 case "$content_type" in
   text/html*|application/json*|*+json*) die "Backup endpoint returned an error-like Content-Type: ${content_type:-unknown}" 74 ;;
   application/octet-stream*|application/x-unifi-backup*|application/zip*|application/gzip*|application/x-gzip*|"") ;;
