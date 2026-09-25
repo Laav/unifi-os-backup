@@ -53,10 +53,10 @@ if [[ ! -f $source_dir/bin/unifi-backup || ! -f $source_dir/systemd/unifi-backup
   source_dir=$INSTALL_DIR
 fi
 
-for required in bin/unifi-backup bin/unifi-mail-backup bin/unifi-backup-check config/unifi-backup.env.example config/graph.env.example systemd/unifi-backup.service systemd/unifi-backup.timer; do
+for required in bin/unifi-backup bin/unifi-mail-backup bin/unifi-backup-check bin/unifi-backup-upload bin/unifi-backup-notify bin/unifi-backup-status lib/unifi-backup-common.sh config/unifi-backup.env.example config/graph.env.example config/storage.env.example config/ntfy.env.example systemd/unifi-backup.service systemd/unifi-backup.timer; do
   [[ -f $source_dir/$required ]] || die "incomplete source tree; missing $required" 66
 done
-for script in "$source_dir/bin/unifi-backup" "$source_dir/bin/unifi-mail-backup" "$source_dir/bin/unifi-backup-check"; do
+for script in "$source_dir/bin/unifi-backup" "$source_dir/bin/unifi-mail-backup" "$source_dir/bin/unifi-backup-check" "$source_dir/bin/unifi-backup-upload" "$source_dir/bin/unifi-backup-notify" "$source_dir/bin/unifi-backup-status" "$source_dir/lib/unifi-backup-common.sh"; do
   bash -n "$script" || die "Bash syntax validation failed: $script" 65
 done
 
@@ -64,11 +64,17 @@ log "Installing executables and systemd units"
 install -o root -g root -m 0755 "$source_dir/bin/unifi-backup" /usr/local/sbin/unifi-backup
 install -o root -g root -m 0755 "$source_dir/bin/unifi-mail-backup" /usr/local/sbin/unifi-mail-backup
 install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-check" /usr/local/sbin/unifi-backup-check
+install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-upload" /usr/local/sbin/unifi-backup-upload
+install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-notify" /usr/local/sbin/unifi-backup-notify
+install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-status" /usr/local/sbin/unifi-backup-status
+install -d -o root -g root -m 0755 /usr/local/lib/unifi-backup
+install -o root -g root -m 0644 "$source_dir/lib/unifi-backup-common.sh" /usr/local/lib/unifi-backup/common.sh
 install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup.service" /etc/systemd/system/unifi-backup.service
 install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup.timer" /etc/systemd/system/unifi-backup.timer
 
 install -d -o root -g root -m 0700 /etc/unifi-backup
 install -d -o root -g root -m 0700 /var/backups/unifi
+install -d -o root -g root -m 0755 /var/lib/unifi-backup
 if [[ ! -e /etc/unifi-backup/unifi-backup.env ]]; then
   install -o root -g root -m 0600 "$source_dir/config/unifi-backup.env.example" /etc/unifi-backup/unifi-backup.env
   log "Created /etc/unifi-backup/unifi-backup.env; replace the placeholders before the first run"
@@ -81,9 +87,22 @@ if [[ ! -e /etc/unifi-backup/graph.env ]]; then
 else
   log "Preserved existing /etc/unifi-backup/graph.env"
 fi
-chown root:root /etc/unifi-backup /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /var/backups/unifi
+if [[ ! -e /etc/unifi-backup/storage.env ]]; then
+  install -o root -g root -m 0600 "$source_dir/config/storage.env.example" /etc/unifi-backup/storage.env
+  log "Created optional /etc/unifi-backup/storage.env with placeholders"
+else
+  log "Preserved existing /etc/unifi-backup/storage.env"
+fi
+if [[ ! -e /etc/unifi-backup/ntfy.env ]]; then
+  install -o root -g root -m 0600 "$source_dir/config/ntfy.env.example" /etc/unifi-backup/ntfy.env
+  log "Created optional /etc/unifi-backup/ntfy.env with placeholders"
+else
+  log "Preserved existing /etc/unifi-backup/ntfy.env"
+fi
+chown root:root /etc/unifi-backup /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /var/backups/unifi /var/lib/unifi-backup
 chmod 0700 /etc/unifi-backup /var/backups/unifi
-chmod 0600 /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env
+chmod 0755 /var/lib/unifi-backup
+chmod 0600 /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env
 
 systemctl daemon-reload
 if [[ $ENABLE_TIMER == "true" ]]; then

@@ -12,7 +12,10 @@ secrets*
 
 # Backups, hashes and transient data
 *.unifi
+*.unifi.json
 *.sha256
+status.json
+*.prom
 *.tmp
 *.part
 *.cookie

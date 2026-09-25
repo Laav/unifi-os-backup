@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+PROGRAM="unifi-backup-status"
+STATUS_FILE="/var/lib/unifi-backup/status.json"
+FORMAT="text"
+WARNING_AGE_HOURS="192"
+CRITICAL_AGE_HOURS="216"
+
+usage() {
+  cat <<'EOF'
+Usage: unifi-backup-status [--status-file FILE] [--format text|json|prometheus|snmp]
+                           [--warning-age-hours N] [--critical-age-hours N]
+
+text/json use Nagios-compatible exits: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN.
+snmp prints only the numeric status and exits zero so Net-SNMP can expose it.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --status-file) [[ $# -ge 2 ]] || { usage >&2; exit 3; }; STATUS_FILE=$2; shift 2 ;;
+    --format) [[ $# -ge 2 ]] || { usage >&2; exit 3; }; FORMAT=$2; shift 2 ;;
+    --warning-age-hours) [[ $# -ge 2 ]] || { usage >&2; exit 3; }; WARNING_AGE_HOURS=$2; shift 2 ;;
+    --critical-age-hours) [[ $# -ge 2 ]] || { usage >&2; exit 3; }; CRITICAL_AGE_HOURS=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "$PROGRAM: unknown option: $1" >&2; exit 3 ;;
+  esac
+done
+
+[[ $STATUS_FILE == /* ]] || { echo "$PROGRAM: status path must be absolute" >&2; exit 3; }
+[[ $FORMAT == "text" || $FORMAT == "json" || $FORMAT == "prometheus" || $FORMAT == "snmp" ]] || {
+  echo "$PROGRAM: unsupported format: $FORMAT" >&2; exit 3;
+}
+[[ $WARNING_AGE_HOURS =~ ^[1-9][0-9]*$ && $CRITICAL_AGE_HOURS =~ ^[1-9][0-9]*$ ]] || {
+  echo "$PROGRAM: age thresholds must be positive integers" >&2; exit 3;
+}
+(( CRITICAL_AGE_HOURS > WARNING_AGE_HOURS )) || {
+  echo "$PROGRAM: critical threshold must exceed warning threshold" >&2; exit 3;
+}
+command -v python3 >/dev/null 2>&1 || { echo "$PROGRAM: python3 not found" >&2; exit 3; }
+
+set +e
+python3 - "$STATUS_FILE" "$FORMAT" "$WARNING_AGE_HOURS" "$CRITICAL_AGE_HOURS" <<'PY'
+import datetime, json, pathlib, sys, time
+
+path = pathlib.Path(sys.argv[1])
+fmt = sys.argv[2]
+warning_seconds = int(sys.argv[3]) * 3600
+critical_seconds = int(sys.argv[4]) * 3600
+
+def emit_unknown(message):
+    if fmt == "snmp":
+        print(3)
+        raise SystemExit(0)
+    if fmt == "json":
+        print(json.dumps({"status": "UNKNOWN", "status_code": 3, "message": message}, separators=(",", ":")))
+    elif fmt == "prometheus":
+        print("unifi_backup_monitoring_status 3")
+    else:
+        print("UNKNOWN - " + message)
+    raise SystemExit(3 if fmt != "prometheus" else 0)
+
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    run = data["last_run"]
+except Exception:
+    emit_unknown("status file is missing or invalid")
+
+last_success = data.get("last_success") or {}
+success_epoch = int(last_success.get("completed_timestamp", 0) or 0)
+age = max(0, int(time.time()) - success_epoch) if success_epoch else None
+
+if run.get("status") == "failure":
+    code, label = 2, "CRITICAL"
+    message = f"last run failed with exit {run.get('exit_code', 'unknown')}: {run.get('message', 'failure')}"
+elif age is None:
+    code, label, message = 2, "CRITICAL", "no successful backup recorded"
+elif run.get("remote_status") == "failure" or run.get("remote_metadata_status") == "failure":
+    code, label, message = 1, "WARNING", "local backup succeeded but optional remote storage did not fully succeed"
+elif age >= critical_seconds:
+    code, label, message = 2, "CRITICAL", f"last successful backup is {age} seconds old"
+elif age >= warning_seconds:
+    code, label, message = 1, "WARNING", f"last successful backup is {age} seconds old"
+else:
+    code, label, message = 0, "OK", f"last successful backup is {age} seconds old"
+
+if fmt == "snmp":
+    print(code)
+    raise SystemExit(0)
+if fmt == "json":
+    result = dict(data)
+    result["monitoring"] = {"status": label, "status_code": code, "message": message, "backup_age_seconds": age}
+    print(json.dumps(result, separators=(",", ":"), ensure_ascii=True))
+elif fmt == "prometheus":
+    success = 1 if run.get("status") == "success" else 0
+    remote = {"success": 1, "failure": 0, "disabled": -1, "not_attempted": -1}.get(run.get("remote_status"), -1)
+    remote_metadata = {"success": 1, "failure": 0, "disabled": -1, "not_attempted": -1}.get(run.get("remote_metadata_status"), -1)
+    email = {"success": 1, "failure": 0, "disabled": -1, "not_attempted": -1}.get(run.get("email_status"), -1)
+    print("# HELP unifi_backup_monitoring_status Nagios-style status: 0 OK, 1 WARNING, 2 CRITICAL, 3 UNKNOWN.")
+    print("# TYPE unifi_backup_monitoring_status gauge")
+    print(f"unifi_backup_monitoring_status {code}")
+    print("# TYPE unifi_backup_last_run_success gauge")
+    print(f"unifi_backup_last_run_success {success}")
+    print("# TYPE unifi_backup_last_run_timestamp_seconds gauge")
+    print(f"unifi_backup_last_run_timestamp_seconds {int(run.get('completed_timestamp', 0) or 0)}")
+    print("# TYPE unifi_backup_last_success_timestamp_seconds gauge")
+    print(f"unifi_backup_last_success_timestamp_seconds {success_epoch}")
+    print("# TYPE unifi_backup_age_seconds gauge")
+    print(f"unifi_backup_age_seconds {age if age is not None else -1}")
+    print("# TYPE unifi_backup_size_bytes gauge")
+    print(f"unifi_backup_size_bytes {int(last_success.get('size_bytes', 0) or 0)}")
+    print("# TYPE unifi_backup_duration_seconds gauge")
+    print(f"unifi_backup_duration_seconds {int(run.get('duration_seconds', 0) or 0)}")
+    print("# TYPE unifi_backup_remote_upload_success gauge")
+    print(f"unifi_backup_remote_upload_success {remote}")
+    print("# TYPE unifi_backup_remote_metadata_success gauge")
+    print(f"unifi_backup_remote_metadata_success {remote_metadata}")
+    print("# TYPE unifi_backup_email_success gauge")
+    print(f"unifi_backup_email_success {email}")
+else:
+    print(f"{label} - {message}")
+raise SystemExit(code if fmt in ("text", "json") else 0)
+PY
+rc=$?
+set -e
+exit "$rc"

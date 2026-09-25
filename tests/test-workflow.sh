@@ -6,7 +6,8 @@ tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 mkdir "$tmp/bin" "$tmp/backups" "$tmp/locks"
 cp "$root/tests/fixtures/mock-curl" "$tmp/bin/curl"
-chmod 0755 "$tmp/bin/curl"
+cp "$root/tests/fixtures/mock-hostname" "$tmp/bin/hostname"
+chmod 0755 "$tmp/bin/curl" "$tmp/bin/hostname"
 if ! command -v flock >/dev/null 2>&1; then
   cp "$root/tests/fixtures/mock-flock" "$tmp/bin/flock"
   chmod 0755 "$tmp/bin/flock"
@@ -18,6 +19,8 @@ config="$tmp/unifi-backup.env"
 sed -e 's#https://unifi.example.invalid:11443#https://127.0.0.1:11443#' \
     -e '/^UNIFI_PASSWORD=/d' \
     -e "s#BACKUP_DIR=\"/var/backups/unifi\"#BACKUP_DIR=\"$tmp/backups\"#" \
+    -e "s#STATUS_FILE=\"/var/lib/unifi-backup/status.json\"#STATUS_FILE=\"$tmp/backups/status.json\"#" \
+    -e 's#BACKUP_DOWNLOAD_RETRIES="1"#BACKUP_DOWNLOAD_RETRIES="0"#' \
     -e "s#LOCK_FILE=\"/run/unifi-backup/unifi-backup.lock\"#LOCK_FILE=\"$tmp/backups/.unifi-backup.lock\"#" \
     "$root/config/unifi-backup.env.example" > "$config"
 printf 'UNIFI_PASSWORD=%q\n' "$password" >> "$config"

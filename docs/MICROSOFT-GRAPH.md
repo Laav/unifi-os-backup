@@ -38,7 +38,7 @@ GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES="2800000"
 
 Then set `ENABLE_EMAIL="true"` in `unifi-backup.env`. Keep both files root:root 0600.
 
-The OAuth request uses the v2 token endpoint, client credentials grant, and `https://graph.microsoft.com/.default`. The secret is URL-encoded by Python and streamed to curl via stdin. The access token is held briefly in a root-only temporary header file, never in a process argument or log, and removed by a trap. `GRAPH_AUTH_METHOD` makes the authentication strategy explicit; only `client_secret` is accepted in 1.0.0. A later certificate implementation can add a separate assertion generator without changing backup or mail-payload logic.
+The OAuth request uses the v2 token endpoint, client credentials grant, and `https://graph.microsoft.com/.default`. The secret is URL-encoded by Python and streamed to curl via stdin. The access token is held briefly in a root-only temporary header file, never in a process argument or log, and removed by a trap. `GRAPH_AUTH_METHOD` makes the authentication strategy explicit; only `client_secret` is accepted in 1.1.0. A later certificate implementation can add a separate assertion generator without changing backup or mail-payload logic.
 
 ## Attachment limit
 
@@ -51,6 +51,8 @@ This implementation therefore:
 - detects size before requesting a token or building base64;
 - leaves the local backup untouched and exits nonzero when too large;
 - builds normal JSON in a mode-0600 payload file and sends it with `--data-binary @file`, never as a giant shell argument.
+
+When a managed metadata sidecar is available, its small JSON file is attached separately and the backup ID plus remote-storage status appear in the HTML body. The `.unifi` size ceiling remains the controlling limit; metadata is independently limited to 65,536 bytes.
 
 For larger backups, prefer a dedicated encrypted backup store and email only a notification. A future upload-session module would need a separate security review, draft-message lifecycle, chunking/retry logic, and `Mail.ReadWrite`; simply posting a huge `sendMail` body is unsupported.
 

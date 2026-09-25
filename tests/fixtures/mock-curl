@@ -37,7 +37,15 @@ case "$url" in
     printf '200'
     ;;
   */api/backup/download)
+    return_html=false
     if [[ ${MOCK_CURL_MODE:-success} == "html" ]]; then
+      return_html=true
+    elif [[ ${MOCK_CURL_MODE:-success} == "html_once" && ! -e ${MOCK_CURL_STATE_FILE:-} ]]; then
+      [[ -n ${MOCK_CURL_STATE_FILE:-} ]] || { echo "mock-curl: MOCK_CURL_STATE_FILE is required" >&2; exit 64; }
+      : > "$MOCK_CURL_STATE_FILE"
+      return_html=true
+    fi
+    if [[ $return_html == "true" ]]; then
       printf 'HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n' > "$header_file"
       python3 -c 'import sys; open(sys.argv[1],"wb").write(b"<!doctype html><html>login</html>" + b"x"*12000)' "$output_file"
     else

@@ -67,3 +67,18 @@ Do not weaken all hardening to solve one path mismatch.
 - HTTP 202 but no message: acceptance is asynchronous; use message trace and check Exchange rules/limits.
 
 The software logs sanitized Graph error code/message only, never the token or secret.
+
+## Intermittent error-like backup response
+
+A successful login does not guarantee that the subsequent unsupported backup endpoint will immediately return a backup. A real incident showed an HTML/JSON-like response on one run and a valid `.unifi` response a few minutes later. When `BACKUP_DOWNLOAD_RETRIES` is greater than zero, the current version waits `BACKUP_RETRY_DELAY`, performs a fresh login, and retries only a bounded number of times.
+
+The response is never published as a backup, retained, attached, or uploaded. Because Graph mail happens only after successful backup validation, no success email is sent for such a failed run. The status file, Prometheus metrics, JSON event, systemd exit code, and optional ntfy failure notification record the failure instead.
+
+If all attempts fail, do not increase retries indefinitely. Check UniFi health and recent upgrades, run `sudo unifi-backup-check --live`, wait a few minutes, and perform one manual service run. Repeated failures may indicate a changed controlplane contract.
+
+## Remote storage and notifications
+
+- Azure/S3 failure with a retained local backup: inspect the `remote_upload_failed` event and [STORAGE.md](STORAGE.md); never paste a SAS or key into an issue.
+- HTTP 409/412 from object storage: an object with the same managed name already exists; the uploader refuses overwrite.
+- ntfy HTTP 401/403: verify the access token and topic ACL without logging or placing the token on the command line.
+- No ntfy notification after an early configuration error: notification configuration may not have been safely loaded yet; systemd/journald remains authoritative.

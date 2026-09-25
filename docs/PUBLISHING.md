@@ -9,8 +9,8 @@ The source tree is designed to be public, but the final GitHub owner/repository 
    git init
    git add .
    git update-index --chmod=+x install.sh update.sh uninstall.sh
-   git update-index --chmod=+x bin/unifi-backup bin/unifi-mail-backup bin/unifi-backup-check
-   git update-index --chmod=+x tests/run.sh tests/test-*.sh tests/fixtures/mock-curl
+   git update-index --chmod=+x bin/*
+   git update-index --chmod=+x tests/run.sh tests/test-*.sh tests/fixtures/mock-*
    ```
 
 3. Run `bash tests/run.sh` and ShellCheck on Ubuntu. Let the matrix CI pass on 22.04, 24.04, and 26.04.

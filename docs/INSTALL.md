@@ -48,9 +48,14 @@ The standalone installer requires Git, clones into `/opt/unifi-os-backup`, then 
 | `/usr/local/sbin/unifi-backup` | 0755 | Backup workflow |
 | `/usr/local/sbin/unifi-mail-backup` | 0755 | Optional Graph mailer |
 | `/usr/local/sbin/unifi-backup-check` | 0755 | Configuration/live check |
+| `/usr/local/sbin/unifi-backup-upload` | 0755 | Optional Azure Blob/S3 uploader |
+| `/usr/local/sbin/unifi-backup-notify` | 0755 | Optional ntfy publisher |
+| `/usr/local/sbin/unifi-backup-status` | 0755 | Monitoring output for RMM/SNMP/Prometheus |
+| `/usr/local/lib/unifi-backup/common.sh` | 0644 | Shared structured logging helpers |
 | `/etc/unifi-backup/` | 0700 | Configuration directory |
 | `/etc/unifi-backup/*.env` | 0600 | Root-owned secrets |
 | `/var/backups/unifi/` | 0700 | Backups |
+| `/var/lib/unifi-backup/` | 0755 | Non-secret status and Prometheus metrics |
 | `/etc/systemd/system/unifi-backup.*` | 0644 | Unit and timer |
 
 The examples are copied only when the destination does not exist. Re-running `install.sh` preserves configuration and backups.
@@ -71,4 +76,4 @@ Check `systemctl status` and `journalctl -u unifi-backup.service` after the firs
 
 ## Uninstall
 
-`sudo ./uninstall.sh` removes programs and units but preserves secrets and backups. `sudo ./uninstall.sh --purge` also permanently deletes `/etc/unifi-backup` and `/var/backups/unifi`; inspect and copy important backups first.
+`sudo ./uninstall.sh` removes programs and units but preserves secrets, monitoring state, and backups. `sudo ./uninstall.sh --purge` also permanently deletes `/etc/unifi-backup`, `/var/lib/unifi-backup`, and `/var/backups/unifi`; inspect and copy important backups first.

@@ -23,17 +23,26 @@ chmod 0600 "$config" "$graph_config"
 
 backup="$tmp/backups/unifi_os_backup_2026-01-02_03-04-05.unifi"
 printf 'test-backup-content' > "$backup"
-chmod 0600 "$backup"
+metadata="$backup.json"
+cat > "$metadata" <<'JSON'
+{
+  "schema_version": 1,
+  "backup": {"id": "22222222-2222-4222-8222-222222222222"},
+  "remote_storage": {"type": "azure_blob", "backup_status": "success"}
+}
+JSON
+chmod 0600 "$backup" "$metadata"
 export MOCK_GRAPH_PAYLOAD_CAPTURE="$tmp/payload.json"
 
 PATH="$tmp/bin:$PATH" "$root/bin/unifi-mail-backup" \
-  --config "$config" --graph-config "$graph_config" "$backup" > "$tmp/mail.log" 2>&1
+  --config "$config" --graph-config "$graph_config" --metadata "$metadata" "$backup" > "$tmp/mail.log" 2>&1
 
-python3 - "$MOCK_GRAPH_PAYLOAD_CAPTURE" "$backup" <<'PY'
+python3 - "$MOCK_GRAPH_PAYLOAD_CAPTURE" "$backup" "$metadata" <<'PY'
 import base64, json, pathlib, sys
 
 payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 source = pathlib.Path(sys.argv[2]).read_bytes()
+metadata = pathlib.Path(sys.argv[3]).read_bytes()
 message = payload["message"]
 body = message["body"]["content"]
 
@@ -41,11 +50,16 @@ assert message["subject"] == "[Success] UniFi OS backup - mail-template-test"
 assert message["body"]["contentType"] == "HTML"
 assert message["toRecipients"] == [{"emailAddress": {"address": "operations@example.invalid"}}]
 assert base64.b64decode(message["attachments"][0]["contentBytes"]) == source
+assert message["attachments"][1]["contentType"] == "application/json"
+assert base64.b64decode(message["attachments"][1]["contentBytes"]) == metadata
 assert "UniFi OS Backup" in body
 assert "Backup completed successfully and is ready for secure storage" in body
 assert "Backup details" in body
 assert "Integrity check" in body
 assert "SHA256" in body
+assert "Backup ID" in body
+assert "22222222-2222-4222-8222-222222222222" in body
+assert "azure_blob: success" in body
 assert "No reply is required" in body
 assert 'role="presentation"' in body
 assert "background-color:#111827" in body

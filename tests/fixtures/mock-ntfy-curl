@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ -n ${MOCK_NTFY_CAPTURE:-} ]] || { echo "mock-ntfy-curl: capture directory missing" >&2; exit 64; }
+mkdir -p "$MOCK_NTFY_CAPTURE"
+printf '%s\n' "$@" > "$MOCK_NTFY_CAPTURE/argv"
+config_file=""
+output_file=""
+read_stdin=false
+: > "$MOCK_NTFY_CAPTURE/headers"
+while (($#)); do
+  case "$1" in
+    --config) config_file=$2; shift 2 ;;
+    --output) output_file=$2; shift 2 ;;
+    --data-binary) [[ $2 == "@-" ]] && read_stdin=true; shift 2 ;;
+    --header)
+      if [[ $2 == @* ]]; then cat "${2#@}" >> "$MOCK_NTFY_CAPTURE/headers"; else printf '%s\n' "$2" >> "$MOCK_NTFY_CAPTURE/headers"; fi
+      shift 2
+      ;;
+    --write-out|--connect-timeout|--max-time|--request|--cacert) shift 2 ;;
+    --silent|--show-error) shift ;;
+    *) echo "mock-ntfy-curl: unexpected argument: $1" >&2; exit 64 ;;
+  esac
+done
+[[ -f $config_file && -n $output_file && $read_stdin == "true" ]] || { echo "mock-ntfy-curl: required argument missing" >&2; exit 65; }
+cp "$config_file" "$MOCK_NTFY_CAPTURE/curl-config"
+cat > "$MOCK_NTFY_CAPTURE/body"
+: > "$output_file"
+printf '%s' "${MOCK_NTFY_HTTP_STATUS:-200}"

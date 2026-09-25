@@ -9,9 +9,39 @@ sudo git pull --ff-only
 sudo ./update.sh
 sudo unifi-backup-check --live
 sudo systemctl start unifi-backup.service
+sudo journalctl -u unifi-backup.service -n 100 --no-pager
 ```
 
-The updater replaces installed executables and units only. It does not edit or remove `/etc/unifi-backup` and `/var/backups/unifi`. New settings appear only in `config/*.example`; merge them manually when the changelog says they are required.
+The updater replaces installed executables, the shared library, and units. It does not replace or remove existing files in `/etc/unifi-backup` and never changes `/var/backups/unifi`. It creates newly introduced optional `storage.env` and `ntfy.env` only when absent, using fictitious placeholders and mode 0600. New main settings appear in `config/unifi-backup.env.example`; merge the settings you intend to use manually.
+
+## Upgrading from 1.0.x to 1.1.0
+
+Existing installations remain local-only by default because missing new variables receive safe defaults. After `update.sh`, review and optionally add:
+
+```bash
+RETENTION_COUNT="0"
+RETENTION_MIN_COUNT="1"
+BACKUP_DOWNLOAD_RETRIES="1"
+BACKUP_RETRY_DELAY="15"
+LOG_FORMAT="text"
+STATUS_FILE="/var/lib/unifi-backup/status.json"
+REMOTE_STORAGE_TYPE="none"
+STORAGE_CONFIG_FILE="/etc/unifi-backup/storage.env"
+REMOTE_UPLOAD_REQUIRED="true"
+ENABLE_NTFY="false"
+NTFY_CONFIG_FILE="/etc/unifi-backup/ntfy.env"
+NOTIFY_ON_SUCCESS="false"
+NOTIFY_ON_FAILURE="true"
+NOTIFY_ON_RECOVERY="true"
+```
+
+Do not paste cloud or ntfy secrets into the main file; keep them in their separate mode-0600 files. A first real run creates the status/metrics files and a metadata sidecar. Confirm:
+
+```bash
+sudo unifi-backup-status
+sudo ls -l /var/lib/unifi-backup
+sudo ls -l /var/backups/unifi/*.unifi.json
+```
 
 If local repository changes exist, stop and review them instead of forcing a pull. Keep local configuration outside the checkout, use systemd drop-ins for local unit changes, and avoid editing installed scripts directly.
 

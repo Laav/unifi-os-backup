@@ -6,12 +6,14 @@ PROGRAM="unifi-mail-backup"
 CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
 GRAPH_CONFIG_FILE="/etc/unifi-backup/graph.env"
 GRAPH_CONFIG_OVERRIDE=""
+METADATA_FILE=""
 
-usage() { echo "Usage: unifi-mail-backup [--config FILE] [--graph-config FILE] BACKUP.unifi"; }
+usage() { echo "Usage: unifi-mail-backup [--config FILE] [--graph-config FILE] [--metadata FILE] BACKUP.unifi"; }
 while (($#)); do
   case "$1" in
     --config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; CONFIG_FILE=$2; shift 2 ;;
     --graph-config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; GRAPH_CONFIG_OVERRIDE=$2; shift 2 ;;
+    --metadata) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; METADATA_FILE=$2; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --*) echo "$PROGRAM: unknown option: $1" >&2; exit 64 ;;
     *) [[ -z ${BACKUP_FILE:-} ]] || { usage >&2; exit 64; }; BACKUP_FILE=$1; shift ;;
@@ -19,8 +21,15 @@ while (($#)); do
 done
 : "${BACKUP_FILE:=}"
 
-log() { printf '%s: %s\n' "$PROGRAM" "$*"; }
-die() { local message=$1 code=${2:-1}; printf '%s: ERROR: %s\n' "$PROGRAM" "$message" >&2; exit "$code"; }
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+common_file="$script_dir/../lib/unifi-backup-common.sh"
+[[ -r $common_file ]] || common_file="/usr/local/lib/unifi-backup/common.sh"
+[[ -r $common_file ]] || { echo "$PROGRAM: ERROR: common library not found" >&2; exit 69; }
+# shellcheck source=../lib/unifi-backup-common.sh
+source "$common_file"
+
+log() { ub_info mail_event "$*"; }
+die() { local message=$1 code=${2:-1}; ub_error mail_failed "$message" exit_code "$code"; exit "$code"; }
 is_positive_int() { [[ $1 =~ ^[1-9][0-9]*$ ]]; }
 describe_curl_error() {
   case "$1" in
@@ -66,6 +75,7 @@ source "$GRAPH_CONFIG_FILE"
 : "${GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES:=2800000}"
 : "${CURL_CONNECT_TIMEOUT:=15}" "${CURL_MAX_TIME:=1800}" "${UNIFI_URL:=unknown}"
 : "${BACKUP_DIR:=/var/backups/unifi}"
+: "${LOG_FORMAT:=text}"
 
 [[ $BACKUP_DIR == /* && $BACKUP_DIR != "/" ]] || die "BACKUP_DIR must be an absolute, non-root path" 78
 BACKUP_DIR=${BACKUP_DIR%/}
@@ -73,12 +83,24 @@ BACKUP_DIR=${BACKUP_DIR%/}
 [[ $BACKUP_FILE == /* && ${BACKUP_FILE%/*} == "$BACKUP_DIR" ]] || die "Backup file must be directly inside BACKUP_DIR" 66
 [[ -f $BACKUP_FILE && -r $BACKUP_FILE && -s $BACKUP_FILE && ! -L $BACKUP_FILE ]] || die "Backup file is missing, empty, unreadable, or a symbolic link: $BACKUP_FILE" 66
 [[ ${BACKUP_FILE##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi$ ]] || die "Backup filename does not match the managed backup pattern" 65
+[[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 78
 backup_mode=$(stat -c '%a' "$BACKUP_FILE")
 backup_owner=$(stat -c '%u' "$BACKUP_FILE")
 expected_owner=$EUID
 (( EUID == 0 )) && expected_owner=0
 [[ $backup_owner == "$expected_owner" ]] || die "Backup file must be owned by UID $expected_owner" 66
 (( (8#$backup_mode & 8#077) == 0 )) || die "Backup file must not be accessible by group or others" 66
+if [[ -n $METADATA_FILE ]]; then
+  [[ $METADATA_FILE == "$BACKUP_FILE.json" ]] || die "Metadata file must be the backup's managed .json sidecar" 66
+  [[ -f $METADATA_FILE && -r $METADATA_FILE && -s $METADATA_FILE && ! -L $METADATA_FILE ]] || die "Metadata file is missing, empty, unreadable, or a symbolic link" 66
+  metadata_mode=$(stat -c '%a' "$METADATA_FILE")
+  metadata_owner=$(stat -c '%u' "$METADATA_FILE")
+  [[ $metadata_owner == "$expected_owner" ]] || die "Metadata file must be owned by UID $expected_owner" 66
+  (( (8#$metadata_mode & 8#077) == 0 )) || die "Metadata file must not be accessible by group or others" 66
+  metadata_size=$(stat -c '%s' "$METADATA_FILE")
+  (( metadata_size <= 65536 )) || die "Metadata file exceeds the 65536-byte safety limit" 65
+  python3 -m json.tool "$METADATA_FILE" >/dev/null || die "Metadata file is not valid JSON" 65
+fi
 for required_name in TENANT_ID CLIENT_ID CLIENT_SECRET MAIL_FROM MAIL_TO; do
   [[ -n ${!required_name} ]] || die "$required_name is required in $GRAPH_CONFIG_FILE" 78
   [[ ${!required_name} != "CHANGE_ME" ]] || die "Replace placeholder $required_name" 78
@@ -112,7 +134,7 @@ generate_token_form() {
 }
 
 token_url="https://login.microsoftonline.com/$TENANT_ID/oauth2/v2.0/token"
-log "Requesting Microsoft Graph application token"
+ub_info graph_token_requested "Requesting Microsoft Graph application token"
 if token_http=$(generate_token_form | curl --silent --show-error \
     --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time 60 \
     --header 'Content-Type: application/x-www-form-urlencoded' --data-binary @- \
@@ -144,12 +166,17 @@ rm -f -- "$tmp_token_response"
 
 host_name=$(hostname -f 2>/dev/null || hostname)
 sha256=$(sha256sum "$BACKUP_FILE" | awk '{print $1}')
-python3 - "$BACKUP_FILE" "$tmp_payload" "$host_name" "$UNIFI_URL" "$MAIL_TO" "$sha256" <<'PY'
+python3 - "$BACKUP_FILE" "$tmp_payload" "$host_name" "$UNIFI_URL" "$MAIL_TO" "$sha256" "$METADATA_FILE" <<'PY'
 import base64,datetime,html,json,os,pathlib,sys
-source,path_out,host,server,recipient,sha=sys.argv[1:]
+source,path_out,host,server,recipient,sha,metadata_path=sys.argv[1:]
 p=pathlib.Path(source)
 st=p.stat()
 when=datetime.datetime.fromtimestamp(st.st_mtime).astimezone()
+metadata={}
+if metadata_path:
+    metadata=json.loads(pathlib.Path(metadata_path).read_text(encoding="utf-8"))
+backup_meta=metadata.get("backup", {})
+remote_meta=metadata.get("remote_storage", {})
 def esc(v): return html.escape(str(v),quote=True)
 def format_size(value):
     if value < 1024:
@@ -159,6 +186,12 @@ def format_size(value):
     if value < 1024**3:
         return f"{value / 1024**2:.1f} MiB ({value:,} bytes)"
     return f"{value / 1024**3:.1f} GiB ({value:,} bytes)"
+
+metadata_rows=""
+if backup_meta.get("id"):
+    metadata_rows += f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Backup ID</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;word-break:break-all;\">{esc(backup_meta['id'])}</td></tr>"
+if remote_meta:
+    metadata_rows += f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Remote storage</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(remote_meta.get('type', 'none'))}: {esc(remote_meta.get('backup_status', 'unknown'))}</td></tr>"
 
 # Table-based layout and inline styles keep the message predictable in Outlook
 # desktop, Outlook on the web, and other clients with restricted CSS support.
@@ -184,6 +217,7 @@ body=("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\
       f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Date</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(when.strftime('%Y-%m-%d'))}</td></tr>"
       f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Time</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(when.strftime('%H:%M:%S %Z'))}</td></tr>"
       f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Size</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(format_size(st.st_size))}</td></tr>"
+      f"{metadata_rows}"
       "</table>"
       "<div style=\"margin-bottom:12px;font-size:18px;line-height:24px;font-weight:700;color:#1f2937;\">Integrity check</div>"
       f"<div style=\"margin-bottom:28px;padding:14px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:19px;color:#374151;word-break:break-all;\"><strong>SHA256</strong><br>{esc(sha)}</div>"
@@ -191,12 +225,18 @@ body=("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\
       "</td></tr>"
       f"<tr><td style=\"padding:20px 32px;background-color:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 12px 12px;font-size:12px;line-height:19px;color:#6b7280;\">This message was generated automatically by the UniFi backup service on {esc(host)}. No reply is required.</td></tr>"
       "</table></td></tr></table></body></html>")
+attachments=[{"@odata.type":"#microsoft.graph.fileAttachment","name":p.name,
+              "contentType":"application/octet-stream",
+              "contentBytes":base64.b64encode(p.read_bytes()).decode("ascii")}]
+if metadata_path:
+    metadata_file=pathlib.Path(metadata_path)
+    attachments.append({"@odata.type":"#microsoft.graph.fileAttachment","name":metadata_file.name,
+                        "contentType":"application/json",
+                        "contentBytes":base64.b64encode(metadata_file.read_bytes()).decode("ascii")})
 payload={"message":{"subject":f"[Success] UniFi OS backup - {host}",
   "body":{"contentType":"HTML","content":body},
   "toRecipients":[{"emailAddress":{"address":recipient}}],
-  "attachments":[{"@odata.type":"#microsoft.graph.fileAttachment","name":p.name,
-                  "contentType":"application/octet-stream",
-                  "contentBytes":base64.b64encode(p.read_bytes()).decode("ascii")}]
+  "attachments":attachments
  }}
 with open(path_out,"w",encoding="utf-8") as f: json.dump(payload,f,separators=(",",":"),ensure_ascii=False)
 os.chmod(path_out,0o600)
@@ -204,7 +244,7 @@ PY
 
 mailbox_path=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""),end="")' "$MAIL_FROM")
 send_url="https://graph.microsoft.com/v1.0/users/$mailbox_path/sendMail"
-log "Sending backup email through Microsoft Graph"
+ub_info graph_send_started "Sending backup email through Microsoft Graph"
 if send_http=$(curl --silent --show-error --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" \
     --header "@$tmp_auth_header" --header 'Content-Type: application/json' \
     --data-binary "@$tmp_payload" --output "$tmp_graph_response" --write-out '%{http_code}' "$send_url"); then :; else
@@ -222,4 +262,4 @@ PY
   )
   die "Graph sendMail failed: HTTP $send_http ($graph_error); local backup retained" 75
 }
-log "Microsoft Graph accepted the message (HTTP 202)"
+ub_info graph_send_accepted "Microsoft Graph accepted the message (HTTP 202)" http_status_code "$send_http"

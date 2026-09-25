@@ -3,9 +3,22 @@ set -Eeuo pipefail
 umask 077
 
 PROGRAM="unifi-backup"
-VERSION="1.0.0"
+VERSION="1.1.0"
 CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
 MODE="backup"
+
+RUN_ERROR=""
+RUN_TRACKING=false
+RUN_STARTED_TIMESTAMP=$(date +%s)
+RUN_ID=""
+PREVIOUS_RUN_STATUS="unknown"
+final_backup=""
+metadata_file=""
+backup_size="0"
+sha256=""
+REMOTE_STATUS="not_attempted"
+REMOTE_METADATA_STATUS="not_attempted"
+EMAIL_STATUS="not_attempted"
 
 usage() {
   cat <<'EOF'
@@ -27,33 +40,43 @@ while (($#)); do
   esac
 done
 
-log() { printf '%s: %s\n' "$PROGRAM" "$*"; }
-warn() { printf '%s: WARNING: %s\n' "$PROGRAM" "$*" >&2; }
-die() { local message=$1 code=${2:-1}; printf '%s: ERROR: %s\n' "$PROGRAM" "$message" >&2; exit "$code"; }
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+common_file="$script_dir/../lib/unifi-backup-common.sh"
+[[ -r $common_file ]] || common_file="/usr/local/lib/unifi-backup/common.sh"
+[[ -r $common_file ]] || { echo "$PROGRAM: ERROR: common library not found" >&2; exit 69; }
+# shellcheck source=../lib/unifi-backup-common.sh
+source "$common_file"
 
-require_command() {
-  command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1" 69
+log_event() { ub_info "$@"; }
+warn_event() { ub_warn "$@"; }
+die() {
+  local message=$1 code=${2:-1} event=${3:-fatal_error}
+  RUN_ERROR=$message
+  ub_error "$event" "$message" exit_code "$code"
+  exit "$code"
 }
 
-is_positive_int() { [[ $1 =~ ^[1-9][0-9]*$ ]]; }
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1" 69 dependency_missing
+}
 
 check_secret_file() {
   local file=$1 mode owner expected_owner config_dir dir_mode dir_owner
-  [[ $file == /* ]] || die "Configuration path must be absolute: $file" 78
-  [[ -f $file ]] || die "Configuration file not found: $file" 78
-  [[ ! -L $file ]] || die "Configuration file may not be a symbolic link: $file" 78
-  mode=$(stat -c '%a' "$file") || die "Cannot inspect permissions on $file" 78
-  owner=$(stat -c '%u' "$file") || die "Cannot inspect owner of $file" 78
+  [[ $file == /* ]] || die "Configuration path must be absolute: $file" 78 configuration_error
+  [[ -f $file ]] || die "Configuration file not found: $file" 78 configuration_error
+  [[ ! -L $file ]] || die "Configuration file may not be a symbolic link: $file" 78 configuration_error
+  mode=$(stat -c '%a' "$file") || die "Cannot inspect permissions on $file" 78 configuration_error
+  owner=$(stat -c '%u' "$file") || die "Cannot inspect owner of $file" 78 configuration_error
   expected_owner=$EUID
   (( EUID == 0 )) && expected_owner=0
-  [[ $owner == "$expected_owner" ]] || die "$file must be owned by UID $expected_owner" 78
-  (( (8#$mode & 8#077) == 0 )) || die "$file must not be accessible by group or others (use chmod 0600)" 78
+  [[ $owner == "$expected_owner" ]] || die "$file must be owned by UID $expected_owner" 78 configuration_error
+  (( (8#$mode & 8#077) == 0 )) || die "$file must not be accessible by group or others (use chmod 0600)" 78 configuration_error
   config_dir=${file%/*}
-  [[ ! -L $config_dir ]] || die "Configuration directory may not be a symbolic link: $config_dir" 78
-  dir_mode=$(stat -c '%a' "$config_dir") || die "Cannot inspect configuration directory: $config_dir" 78
-  dir_owner=$(stat -c '%u' "$config_dir") || die "Cannot inspect configuration directory owner: $config_dir" 78
-  [[ $dir_owner == "$expected_owner" ]] || die "$config_dir must be owned by UID $expected_owner" 78
-  (( (8#$dir_mode & 8#077) == 0 )) || die "$config_dir must not be accessible by group or others (use chmod 0700)" 78
+  [[ ! -L $config_dir ]] || die "Configuration directory may not be a symbolic link: $config_dir" 78 configuration_error
+  dir_mode=$(stat -c '%a' "$config_dir") || die "Cannot inspect configuration directory: $config_dir" 78 configuration_error
+  dir_owner=$(stat -c '%u' "$config_dir") || die "Cannot inspect configuration directory owner: $config_dir" 78 configuration_error
+  [[ $dir_owner == "$expected_owner" ]] || die "$config_dir must be owned by UID $expected_owner" 78 configuration_error
+  (( (8#$dir_mode & 8#077) == 0 )) || die "$config_dir must not be accessible by group or others (use chmod 0700)" 78 configuration_error
 }
 
 check_secret_file "$CONFIG_FILE"
@@ -67,81 +90,142 @@ source "$CONFIG_FILE"
 : "${UNIFI_PASSWORD:=}"
 : "${BACKUP_DIR:=/var/backups/unifi}"
 : "${RETENTION_DAYS:=35}"
+: "${RETENTION_COUNT:=0}"
+: "${RETENTION_MIN_COUNT:=1}"
 : "${MIN_BACKUP_SIZE:=10000}"
 : "${CURL_CONNECT_TIMEOUT:=15}"
 : "${CURL_MAX_TIME:=1800}"
+: "${BACKUP_DOWNLOAD_RETRIES:=1}"
+: "${BACKUP_RETRY_DELAY:=15}"
 : "${UNIFI_CA_CERT:=}"
+: "${LOG_FORMAT:=text}"
+: "${STATUS_FILE:=/var/lib/unifi-backup/status.json}"
 : "${ENABLE_EMAIL:=false}"
 : "${GRAPH_CONFIG_FILE:=/etc/unifi-backup/graph.env}"
+: "${REMOTE_STORAGE_TYPE:=none}"
+: "${STORAGE_CONFIG_FILE:=/etc/unifi-backup/storage.env}"
+: "${REMOTE_UPLOAD_REQUIRED:=true}"
+: "${ENABLE_NTFY:=false}"
+: "${NTFY_CONFIG_FILE:=/etc/unifi-backup/ntfy.env}"
+: "${NOTIFY_ON_SUCCESS:=false}"
+: "${NOTIFY_ON_FAILURE:=true}"
+: "${NOTIFY_ON_RECOVERY:=true}"
 : "${LOCK_FILE:=/run/unifi-backup/unifi-backup.lock}"
 
 validate_config() {
-  [[ -n $UNIFI_URL ]] || die "UNIFI_URL is required" 78
-  [[ $UNIFI_URL =~ ^https://[^/?#@[:space:]]+/?$ ]] || die "UNIFI_URL must be an HTTPS origin without a path, query, fragment, whitespace, or credentials" 78
-  [[ $UNIFI_URL != *"@"* ]] || die "UNIFI_URL must not contain credentials" 78
+  [[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 78 configuration_error
+  [[ -n $UNIFI_URL ]] || die "UNIFI_URL is required" 78 configuration_error
+  [[ $UNIFI_URL =~ ^https://[^/?#@[:space:]]+/?$ ]] || die "UNIFI_URL must be an HTTPS origin without a path, query, fragment, whitespace, or credentials" 78 configuration_error
+  [[ $UNIFI_URL != *"@"* ]] || die "UNIFI_URL must not contain credentials" 78 configuration_error
   UNIFI_URL=${UNIFI_URL%/}
-  [[ -n $UNIFI_USERNAME ]] || die "UNIFI_USERNAME is required" 78
-  [[ -n $UNIFI_PASSWORD ]] || die "UNIFI_PASSWORD is required" 78
-  [[ $UNIFI_PASSWORD != "CHANGE_ME" ]] || die "Replace the placeholder UNIFI_PASSWORD" 78
-  [[ $BACKUP_DIR == /* && $BACKUP_DIR != "/" ]] || die "BACKUP_DIR must be an absolute, non-root path" 78
+  [[ -n $UNIFI_USERNAME ]] || die "UNIFI_USERNAME is required" 78 configuration_error
+  [[ -n $UNIFI_PASSWORD ]] || die "UNIFI_PASSWORD is required" 78 configuration_error
+  [[ $UNIFI_PASSWORD != "CHANGE_ME" ]] || die "Replace the placeholder UNIFI_PASSWORD" 78 configuration_error
+  [[ $BACKUP_DIR == /* && $BACKUP_DIR != "/" ]] || die "BACKUP_DIR must be an absolute, non-root path" 78 configuration_error
   BACKUP_DIR=${BACKUP_DIR%/}
-  is_positive_int "$RETENTION_DAYS" || die "RETENTION_DAYS must be a positive integer" 78
-  is_positive_int "$MIN_BACKUP_SIZE" || die "MIN_BACKUP_SIZE must be a positive integer" 78
-  is_positive_int "$CURL_CONNECT_TIMEOUT" || die "CURL_CONNECT_TIMEOUT must be a positive integer" 78
-  is_positive_int "$CURL_MAX_TIME" || die "CURL_MAX_TIME must be a positive integer" 78
-  (( CURL_MAX_TIME >= CURL_CONNECT_TIMEOUT )) || die "CURL_MAX_TIME must be at least CURL_CONNECT_TIMEOUT" 78
-  [[ $ENABLE_EMAIL == "true" || $ENABLE_EMAIL == "false" ]] || die "ENABLE_EMAIL must be true or false" 78
+  ub_is_nonnegative_int "$RETENTION_DAYS" || die "RETENTION_DAYS must be a non-negative integer" 78 configuration_error
+  ub_is_nonnegative_int "$RETENTION_COUNT" || die "RETENTION_COUNT must be a non-negative integer" 78 configuration_error
+  ub_is_nonnegative_int "$RETENTION_MIN_COUNT" || die "RETENTION_MIN_COUNT must be a non-negative integer" 78 configuration_error
+  (( RETENTION_COUNT == 0 || RETENTION_COUNT >= RETENTION_MIN_COUNT )) || die "RETENTION_COUNT must be zero or at least RETENTION_MIN_COUNT" 78 configuration_error
+  ub_is_positive_int "$MIN_BACKUP_SIZE" || die "MIN_BACKUP_SIZE must be a positive integer" 78 configuration_error
+  ub_is_positive_int "$CURL_CONNECT_TIMEOUT" || die "CURL_CONNECT_TIMEOUT must be a positive integer" 78 configuration_error
+  ub_is_positive_int "$CURL_MAX_TIME" || die "CURL_MAX_TIME must be a positive integer" 78 configuration_error
+  (( CURL_MAX_TIME >= CURL_CONNECT_TIMEOUT )) || die "CURL_MAX_TIME must be at least CURL_CONNECT_TIMEOUT" 78 configuration_error
+  ub_is_nonnegative_int "$BACKUP_DOWNLOAD_RETRIES" || die "BACKUP_DOWNLOAD_RETRIES must be a non-negative integer" 78 configuration_error
+  (( BACKUP_DOWNLOAD_RETRIES <= 3 )) || die "BACKUP_DOWNLOAD_RETRIES may not exceed 3" 78 configuration_error
+  ub_is_positive_int "$BACKUP_RETRY_DELAY" || die "BACKUP_RETRY_DELAY must be a positive integer" 78 configuration_error
+  (( BACKUP_RETRY_DELAY <= 300 )) || die "BACKUP_RETRY_DELAY may not exceed 300 seconds" 78 configuration_error
+  ub_is_bool "$ENABLE_EMAIL" || die "ENABLE_EMAIL must be true or false" 78 configuration_error
+  ub_is_bool "$REMOTE_UPLOAD_REQUIRED" || die "REMOTE_UPLOAD_REQUIRED must be true or false" 78 configuration_error
+  ub_is_bool "$ENABLE_NTFY" || die "ENABLE_NTFY must be true or false" 78 configuration_error
+  ub_is_bool "$NOTIFY_ON_SUCCESS" || die "NOTIFY_ON_SUCCESS must be true or false" 78 configuration_error
+  ub_is_bool "$NOTIFY_ON_FAILURE" || die "NOTIFY_ON_FAILURE must be true or false" 78 configuration_error
+  ub_is_bool "$NOTIFY_ON_RECOVERY" || die "NOTIFY_ON_RECOVERY must be true or false" 78 configuration_error
+  [[ $REMOTE_STORAGE_TYPE == "none" || $REMOTE_STORAGE_TYPE == "azure_blob" || $REMOTE_STORAGE_TYPE == "s3" ]] || die "REMOTE_STORAGE_TYPE must be none, azure_blob, or s3" 78 configuration_error
   if [[ -n $UNIFI_CA_CERT ]]; then
-    [[ $UNIFI_CA_CERT == /* && -r $UNIFI_CA_CERT && -f $UNIFI_CA_CERT ]] || die "UNIFI_CA_CERT must name a readable absolute file" 78
+    [[ $UNIFI_CA_CERT == /* && -r $UNIFI_CA_CERT && -f $UNIFI_CA_CERT ]] || die "UNIFI_CA_CERT must name a readable absolute file" 78 configuration_error
   fi
-  [[ ${LOCK_FILE##*/} =~ ^[A-Za-z0-9._-]+\.lock$ ]] || die "LOCK_FILE must end in a safe .lock filename" 78
+  [[ $STATUS_FILE == /* && ${STATUS_FILE##*/} == "status.json" ]] || die "STATUS_FILE must be an absolute path ending in status.json" 78 configuration_error
+  if [[ ${STATUS_FILE%/*} != "/var/lib/unifi-backup" && ${STATUS_FILE%/*} != "$BACKUP_DIR" ]]; then
+    die "STATUS_FILE must be directly below /var/lib/unifi-backup or BACKUP_DIR" 78 configuration_error
+  fi
+  [[ ${LOCK_FILE##*/} =~ ^[A-Za-z0-9._-]+\.lock$ ]] || die "LOCK_FILE must end in a safe .lock filename" 78 configuration_error
   if [[ ${LOCK_FILE%/*} != "/run/unifi-backup" && ${LOCK_FILE%/*} != "$BACKUP_DIR" ]]; then
-    die "LOCK_FILE must be directly below /run/unifi-backup or BACKUP_DIR" 78
+    die "LOCK_FILE must be directly below /run/unifi-backup or BACKUP_DIR" 78 configuration_error
   fi
+  [[ $ENABLE_EMAIL == "false" ]] || check_secret_file "$GRAPH_CONFIG_FILE"
+  [[ $REMOTE_STORAGE_TYPE == "none" ]] || check_secret_file "$STORAGE_CONFIG_FILE"
+  [[ $ENABLE_NTFY == "false" ]] || check_secret_file "$NTFY_CONFIG_FILE"
 }
 
 validate_config
-for command_name in curl python3 stat; do require_command "$command_name"; done
+for command_name in curl python3 stat date; do require_command "$command_name"; done
 
 if [[ $MODE == "validate" ]]; then
-  log "Configuration is valid: $CONFIG_FILE"
+  log_event configuration_valid "Configuration is valid" config_file "$CONFIG_FILE"
   exit 0
 fi
 
 mkdir -p -- "$BACKUP_DIR"
-[[ ! -L $BACKUP_DIR ]] || die "BACKUP_DIR may not be a symbolic link: $BACKUP_DIR" 73
+[[ ! -L $BACKUP_DIR ]] || die "BACKUP_DIR may not be a symbolic link: $BACKUP_DIR" 73 local_storage_error
 chmod 0700 "$BACKUP_DIR"
-[[ -d $BACKUP_DIR && -w $BACKUP_DIR ]] || die "BACKUP_DIR is not a writable directory: $BACKUP_DIR" 73
+[[ -d $BACKUP_DIR && -w $BACKUP_DIR ]] || die "BACKUP_DIR is not a writable directory: $BACKUP_DIR" 73 local_storage_error
+
+# Keep descriptor 9 valid before retention-only mode as well. The retention
+# selector closes it in its child so a normal backup run never leaks the flock.
+exec 9>/dev/null
 
 run_retention() {
-  local candidate deleted=0
-  [[ -n $BACKUP_DIR && $BACKUP_DIR == /* && $BACKUP_DIR != "/" && -d $BACKUP_DIR ]] || die "Unsafe BACKUP_DIR; retention refused" 78
-  is_positive_int "$RETENTION_DAYS" || die "Unsafe RETENTION_DAYS; retention refused" 78
-  while IFS= read -r -d '' candidate; do
-    [[ ${candidate##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi$ ]] || continue
-    log "Removing expired backup: $candidate"
-    rm -f -- "$candidate"
+  local candidate_name candidate reason sidecar deleted=0
+  [[ -n $BACKUP_DIR && $BACKUP_DIR == /* && $BACKUP_DIR != "/" && -d $BACKUP_DIR ]] || die "Unsafe BACKUP_DIR; retention refused" 78 retention_error
+  ub_is_nonnegative_int "$RETENTION_DAYS" || die "Unsafe RETENTION_DAYS; retention refused" 78 retention_error
+  ub_is_nonnegative_int "$RETENTION_COUNT" || die "Unsafe RETENTION_COUNT; retention refused" 78 retention_error
+  ub_is_nonnegative_int "$RETENTION_MIN_COUNT" || die "Unsafe RETENTION_MIN_COUNT; retention refused" 78 retention_error
+
+  while IFS= read -r -d '' candidate_name && IFS= read -r -d '' reason; do
+    [[ $candidate_name =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi$ ]] || continue
+    candidate="$BACKUP_DIR/$candidate_name"
+    log_event retention_delete "Removing backup under retention policy" file "$candidate" reason "$reason"
+    rm -f -- "$candidate" || die "Failed to remove retained backup: $candidate" 74 retention_error
+    sidecar="$candidate.json"
+    [[ ! -e $sidecar || -f $sidecar ]] || die "Refusing unexpected metadata path: $sidecar" 74 retention_error
+    rm -f -- "$sidecar" || die "Failed to remove backup metadata: $sidecar" 74 retention_error
     ((deleted+=1))
-  # Close the lock descriptor in the asynchronous find child. Otherwise that
-  # child can keep the flock alive for a brief moment after the main process
-  # exits, causing an immediate subsequent run to fail spuriously.
-  done < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'unifi_os_backup_*.unifi' -mtime "+$RETENTION_DAYS" -print0 9>&-)
-  log "Retention complete; removed $deleted expired backup(s)"
+  done < <(python3 - "$BACKUP_DIR" "$RETENTION_DAYS" "$RETENTION_COUNT" "$RETENTION_MIN_COUNT" 9>&- <<'PY'
+import pathlib, re, sys, time
+
+directory = pathlib.Path(sys.argv[1])
+days, maximum, minimum = map(int, sys.argv[2:])
+pattern = re.compile(r"^unifi_os_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.unifi$")
+items = sorted((p for p in directory.iterdir() if p.is_file() and not p.is_symlink() and pattern.fullmatch(p.name)), key=lambda p: p.stat().st_mtime, reverse=True)
+now = time.time()
+for index, path in enumerate(items):
+    if index < minimum:
+        continue
+    reasons = []
+    if days and now - path.stat().st_mtime > days * 86400:
+        reasons.append("age")
+    if maximum and index >= maximum:
+        reasons.append("count")
+    if reasons:
+        sys.stdout.buffer.write(path.name.encode() + b"\0" + "+".join(reasons).encode() + b"\0")
+PY
+  )
+  log_event retention_complete "Retention complete" removed_count "$deleted" retention_days "$RETENTION_DAYS" retention_count "$RETENTION_COUNT" minimum_count "$RETENTION_MIN_COUNT"
 }
 
 if [[ $MODE == "retention" ]]; then
-  require_command find
   run_retention
   exit 0
 fi
 
-require_command flock
+for command_name in flock sha256sum hostname mktemp; do require_command "$command_name"; done
 mkdir -p -- "${LOCK_FILE%/*}"
 chmod 0700 "${LOCK_FILE%/*}"
-[[ ! -L $LOCK_FILE ]] || die "Refusing symbolic-link lock file: $LOCK_FILE" 73
+[[ ! -L $LOCK_FILE ]] || die "Refusing symbolic-link lock file: $LOCK_FILE" 73 local_storage_error
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
-  die "Another backup run is already active (lock: $LOCK_FILE)" 75
+  die "Another backup run is already active (lock: $LOCK_FILE)" 75 lock_active
 fi
 
 tmp_cookie=""
@@ -151,14 +235,139 @@ tmp_download_headers=""
 tmp_backup=""
 tmp_csrf_header=""
 
+write_run_status() {
+  local rc=$1 state_message=$2 completed_timestamp duration status_dir
+  completed_timestamp=$(date +%s)
+  duration=$((completed_timestamp - RUN_STARTED_TIMESTAMP))
+  status_dir=${STATUS_FILE%/*}
+  mkdir -p -- "$status_dir" || return 1
+  [[ ! -L $status_dir ]] || return 1
+  [[ $status_dir == "/var/lib/unifi-backup" ]] && chmod 0755 "$status_dir"
+  python3 - "$STATUS_FILE" "$RUN_ID" "$RUN_STARTED_TIMESTAMP" "$completed_timestamp" "$duration" "$rc" "$state_message" \
+    "$final_backup" "$backup_size" "$sha256" "$REMOTE_STATUS" "$REMOTE_METADATA_STATUS" "$EMAIL_STATUS" <<'PY'
+import datetime, json, os, pathlib, sys, tempfile
+
+(path_s, run_id, started, completed, duration, exit_code, message, backup_file,
+ size, sha256, remote_status, remote_metadata_status, email_status) = sys.argv[1:]
+path = pathlib.Path(path_s)
+try:
+    previous = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    previous = {}
+status = "success" if int(exit_code) == 0 else "failure"
+def iso(epoch):
+    return datetime.datetime.fromtimestamp(int(epoch), datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+run = {
+    "id": run_id,
+    "status": status,
+    "started_at": iso(started),
+    "started_timestamp": int(started),
+    "completed_at": iso(completed),
+    "completed_timestamp": int(completed),
+    "duration_seconds": int(duration),
+    "exit_code": int(exit_code),
+    "message": message[:500],
+    "remote_status": remote_status,
+    "remote_metadata_status": remote_metadata_status,
+    "email_status": email_status,
+}
+result = {"schema_version": 1, "last_run": run, "last_success": previous.get("last_success")}
+if status == "success":
+    result["last_success"] = {
+        "completed_at": iso(completed),
+        "completed_timestamp": int(completed),
+        "file": pathlib.Path(backup_file).name if backup_file else "",
+        "size_bytes": int(size),
+        "sha256": sha256,
+    }
+fd, temporary = tempfile.mkstemp(prefix=".status.", dir=str(path.parent))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(result, stream, separators=(",", ":"), ensure_ascii=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, path)
+finally:
+    try: os.unlink(temporary)
+    except FileNotFoundError: pass
+
+last_success = result.get("last_success") or {}
+remote_value = {"success": 1, "failure": 0, "disabled": -1, "not_attempted": -1}.get(remote_status, -1)
+remote_metadata_value = {"success": 1, "failure": 0, "disabled": -1, "not_attempted": -1}.get(remote_metadata_status, -1)
+email_value = {"success": 1, "failure": 0, "disabled": -1, "not_attempted": -1}.get(email_status, -1)
+metrics = "\n".join([
+    "# HELP unifi_backup_last_run_success Whether the most recent run completed successfully.",
+    "# TYPE unifi_backup_last_run_success gauge",
+    f"unifi_backup_last_run_success {1 if status == 'success' else 0}",
+    "# TYPE unifi_backup_last_run_timestamp_seconds gauge",
+    f"unifi_backup_last_run_timestamp_seconds {int(completed)}",
+    "# TYPE unifi_backup_last_run_exit_code gauge",
+    f"unifi_backup_last_run_exit_code {int(exit_code)}",
+    "# TYPE unifi_backup_last_success_timestamp_seconds gauge",
+    f"unifi_backup_last_success_timestamp_seconds {int(last_success.get('completed_timestamp', 0) or 0)}",
+    "# TYPE unifi_backup_size_bytes gauge",
+    f"unifi_backup_size_bytes {int(last_success.get('size_bytes', 0) or 0)}",
+    "# TYPE unifi_backup_duration_seconds gauge",
+    f"unifi_backup_duration_seconds {int(duration)}",
+    "# HELP unifi_backup_remote_upload_success One for success, zero for failure, minus one when disabled or not attempted.",
+    "# TYPE unifi_backup_remote_upload_success gauge",
+    f"unifi_backup_remote_upload_success {remote_value}",
+    "# TYPE unifi_backup_remote_metadata_success gauge",
+    f"unifi_backup_remote_metadata_success {remote_metadata_value}",
+    "# HELP unifi_backup_email_success One for success, zero for failure, minus one when disabled or not attempted.",
+    "# TYPE unifi_backup_email_success gauge",
+    f"unifi_backup_email_success {email_value}",
+]) + "\n"
+metrics_path = path.parent / "unifi_backup.prom"
+fd, temporary = tempfile.mkstemp(prefix=".metrics.", dir=str(path.parent))
+try:
+    with os.fdopen(fd, "w", encoding="ascii") as stream:
+        stream.write(metrics)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temporary, 0o644)
+    os.replace(temporary, metrics_path)
+finally:
+    try: os.unlink(temporary)
+    except FileNotFoundError: pass
+PY
+}
+
+send_run_notification() {
+  local rc=$1 event="" message="" notifier
+  [[ $ENABLE_NTFY == "true" ]] || return 0
+  if (( rc != 0 )) && [[ $NOTIFY_ON_FAILURE == "true" ]]; then
+    event="failure"
+    message="Backup failed with exit code $rc: ${RUN_ERROR:-unexpected command failure}"
+  elif (( rc == 0 )) && [[ $PREVIOUS_RUN_STATUS == "failure" && $NOTIFY_ON_RECOVERY == "true" ]]; then
+    event="recovery"
+    message="Backup service recovered. A validated local backup was created successfully."
+  elif (( rc == 0 )) && [[ $NOTIFY_ON_SUCCESS == "true" ]]; then
+    event="success"
+    message="Backup completed successfully: ${final_backup##*/} ($backup_size bytes)."
+  fi
+  [[ -n $event ]] || return 0
+  notifier="/usr/local/sbin/unifi-backup-notify"
+  [[ -x $notifier ]] || notifier="$script_dir/unifi-backup-notify"
+  if [[ ! -x $notifier ]]; then
+    warn_event notification_unavailable "ntfy is enabled but the notification helper is not installed"
+    return 0
+  fi
+  if ! "$notifier" --config "$CONFIG_FILE" --ntfy-config "$NTFY_CONFIG_FILE" --event "$event" --message "$message" --exit-code "$rc"; then
+    warn_event notification_failed "ntfy notification failed; the backup result is unchanged" notification_event "$event"
+  fi
+}
+
 # ShellCheck cannot infer invocation through the EXIT trap below. SC2317 is
 # emitted by some releases and SC2329 by newer releases for the same pattern.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
-  local rc=$?
+  local rc=$? state_message
+  trap - EXIT INT TERM HUP
   if [[ -n $tmp_backup && -e $tmp_backup ]]; then rm -f -- "$tmp_backup"; fi
   if [[ -n $tmp_cookie && -e $tmp_cookie ]]; then
-    # Best-effort server-side logout. Failure must not mask the actual result.
     if [[ -s $tmp_cookie ]]; then
       local -a logout_args=(--silent --show-error --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time 30
         --request POST --cookie "$tmp_cookie" --output /dev/null)
@@ -172,22 +381,40 @@ cleanup() {
   [[ -n $tmp_login_body ]] && rm -f -- "$tmp_login_body"
   [[ -n $tmp_download_headers ]] && rm -f -- "$tmp_download_headers"
   [[ -n $tmp_csrf_header ]] && rm -f -- "$tmp_csrf_header"
+  if [[ $RUN_TRACKING == "true" ]]; then
+    state_message="${RUN_ERROR:-Backup completed successfully}"
+    if ! write_run_status "$rc" "$state_message"; then
+      warn_event monitoring_state_failed "Could not update monitoring status file" status_file "$STATUS_FILE"
+    fi
+    send_run_notification "$rc"
+  fi
   exit "$rc"
 }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
+trap 'RUN_ERROR="Interrupted"; exit 130' INT
+trap 'RUN_ERROR="Terminated"; exit 143' TERM
+trap 'RUN_ERROR="Hangup received"; exit 129' HUP
 
-describe_curl_error() {
-  case "$1" in
-    5|6) echo "DNS resolution failed" ;;
-    7) echo "connection failed" ;;
-    28) echo "operation timed out" ;;
-    35|51|58|59|60|64|66|77|80|82|83|90|91) echo "TLS/certificate validation failed" ;;
-    *) echo "curl transport error $1" ;;
-  esac
-}
+if [[ $MODE == "backup" ]]; then
+  status_dir=${STATUS_FILE%/*}
+  mkdir -p -- "$status_dir" || die "Cannot create monitoring state directory: $status_dir" 73 monitoring_error
+  [[ ! -L $status_dir ]] || die "Monitoring state directory may not be a symbolic link: $status_dir" 73 monitoring_error
+  RUN_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+  if [[ -f $STATUS_FILE && ! -L $STATUS_FILE ]]; then
+    PREVIOUS_RUN_STATUS=$(python3 - "$STATUS_FILE" <<'PY'
+import json, sys
+try: print(json.load(open(sys.argv[1], encoding="utf-8")).get("last_run", {}).get("status", "unknown"))
+except Exception: print("unknown")
+PY
+    )
+  fi
+  RUN_TRACKING=true
+  if [[ $REMOTE_STORAGE_TYPE == "none" ]]; then
+    REMOTE_STATUS="disabled"
+    REMOTE_METADATA_STATUS="disabled"
+  fi
+  [[ $ENABLE_EMAIL == "false" ]] && EMAIL_STATUS="disabled"
+fi
 
 describe_http_error() {
   case "$1" in
@@ -216,62 +443,56 @@ generate_login_json() {
     python3 -c 'import json,sys; b=sys.stdin.buffer.read().split(b"\0",1); json.dump({"username":b[0].decode(),"password":b[1].decode()},sys.stdout,separators=(",",":"))'
 }
 
-log "Authenticating to UniFi OS controlplane at $UNIFI_URL"
-if login_http=$(generate_login_json | curl "${curl_common[@]}" \
-    --request POST --header 'Content-Type: application/json' --data-binary @- \
-    --cookie-jar "$tmp_cookie" --dump-header "$tmp_login_headers" --output "$tmp_login_body" \
-    --write-out '%{http_code}' "$UNIFI_URL/api/auth/login"); then
-  :
-else
-  curl_rc=$?
-  die "UniFi login transport failure: $(describe_curl_error "$curl_rc")" 69
-fi
+authenticate() {
+  local login_http curl_rc
+  : > "$tmp_cookie"
+  : > "$tmp_login_headers"
+  : > "$tmp_login_body"
+  : > "$tmp_csrf_header"
+  log_event authentication_started "Authenticating to UniFi OS controlplane" unifi_url "$UNIFI_URL"
+  if login_http=$(generate_login_json | curl "${curl_common[@]}" \
+      --request POST --header 'Content-Type: application/json' --data-binary @- \
+      --cookie-jar "$tmp_cookie" --dump-header "$tmp_login_headers" --output "$tmp_login_body" \
+      --write-out '%{http_code}' "$UNIFI_URL/api/auth/login"); then :; else
+    curl_rc=$?
+    die "UniFi login transport failure: $(ub_describe_curl_error "$curl_rc")" 69 authentication_transport_error
+  fi
+  [[ $login_http =~ ^2[0-9][0-9]$ ]] || die "UniFi login failed: HTTP $login_http, $(describe_http_error "$login_http")" 77 authentication_failed
+  if ! awk -F '\t' '{sub(/^#HttpOnly_/,"",$1)} $6 == "TOKEN" {found=1} END {exit !found}' "$tmp_cookie"; then
+    die "Login returned HTTP $login_http but no TOKEN cookie; authentication failed or the controlplane API changed" 77 authentication_failed
+  fi
+  awk 'tolower($0) ~ /^x-csrf-token:[[:space:]]*/ {line=$0; sub(/^[^:]*:[[:space:]]*/,"",line); sub(/\r$/,"",line); value=line} END{if (value != "") print "X-CSRF-Token: " value}' "$tmp_login_headers" > "$tmp_csrf_header"
+  : > "$tmp_login_body"
+  : > "$tmp_login_headers"
+  log_event authentication_succeeded "Authentication succeeded"
+}
 
-[[ $login_http =~ ^2[0-9][0-9]$ ]] || die "UniFi login failed: HTTP $login_http, $(describe_http_error "$login_http")" 77
-if ! awk -F '\t' '{sub(/^#HttpOnly_/,"",$1)} $6 == "TOKEN" {found=1} END {exit !found}' "$tmp_cookie"; then
-  die "Login returned HTTP $login_http but no TOKEN cookie; authentication failed or the controlplane API changed" 77
-fi
-awk 'tolower($0) ~ /^x-csrf-token:[[:space:]]*/ {line=$0; sub(/^[^:]*:[[:space:]]*/,"",line); sub(/\r$/,"",line); value=line} END{if (value != "") print "X-CSRF-Token: " value}' "$tmp_login_headers" > "$tmp_csrf_header"
-rm -f -- "$tmp_login_body" "$tmp_login_headers"
-tmp_login_body=""
-tmp_login_headers=""
-log "Authentication succeeded"
-
+authenticate
 if [[ $MODE == "check" ]]; then
-  log "Controlplane login check succeeded; no backup was requested"
+  log_event controlplane_check_succeeded "Controlplane login check succeeded; no backup was requested"
   exit 0
 fi
 
 timestamp=$(date '+%Y-%m-%d_%H-%M-%S')
 final_backup="$BACKUP_DIR/unifi_os_backup_${timestamp}.unifi"
-[[ ! -e $final_backup ]] || die "Refusing to overwrite existing backup: $final_backup" 73
+[[ ! -e $final_backup ]] || die "Refusing to overwrite existing backup: $final_backup" 73 local_storage_error
 tmp_backup=$(mktemp "$BACKUP_DIR/.unifi_os_backup_${timestamp}.XXXXXX.tmp")
 
-download_args=("${curl_common[@]}" --cookie "$tmp_cookie" --dump-header "$tmp_download_headers"
-  --output "$tmp_backup" --write-out '%{http_code}')
-[[ -s $tmp_csrf_header ]] && download_args+=(--header "@$tmp_csrf_header")
-
-log "Requesting a new UniFi OS system backup"
-if download_http=$(curl "${download_args[@]}" "$UNIFI_URL/api/backup/download"); then
-  :
-else
-  curl_rc=$?
-  die "Backup download transport failure: $(describe_curl_error "$curl_rc")" 69
-fi
-[[ $download_http =~ ^2[0-9][0-9]$ ]] || die "Backup download failed: HTTP $download_http, $(describe_http_error "$download_http")" 74
-[[ -s $tmp_backup ]] || die "Backup response is empty" 74
-
-backup_size=$(stat -c '%s' "$tmp_backup")
-(( backup_size >= MIN_BACKUP_SIZE )) || die "Backup is too small ($backup_size bytes; minimum $MIN_BACKUP_SIZE)" 74
-
-content_type=$(awk 'tolower($0) ~ /^content-type:[[:space:]]*/ {line=$0; sub(/^[^:]*:[[:space:]]*/,"",line); sub(/\r$/,"",line); value=tolower(line)} END{print value}' "$tmp_download_headers")
-case "$content_type" in
-  text/html*|application/json*|*+json*) die "Backup endpoint returned an error-like Content-Type: ${content_type:-unknown}" 74 ;;
-  application/octet-stream*|application/x-unifi-backup*|application/zip*|application/gzip*|application/x-gzip*|"") ;;
-  *) warn "Unrecognized backup Content-Type '$content_type'; continuing with size and content validation" ;;
-esac
-
-if ! python3 - "$tmp_backup" <<'PY'
+validate_download_body() {
+  local candidate=$1 headers=$2 candidate_size content_type
+  [[ -s $candidate ]] || { DOWNLOAD_ERROR="Backup response is empty"; return 1; }
+  candidate_size=$(stat -c '%s' "$candidate") || { DOWNLOAD_ERROR="Cannot determine backup size"; return 1; }
+  if (( candidate_size < MIN_BACKUP_SIZE )); then
+    DOWNLOAD_ERROR="Backup is too small ($candidate_size bytes; minimum $MIN_BACKUP_SIZE)"
+    return 1
+  fi
+  content_type=$(awk 'tolower($0) ~ /^content-type:[[:space:]]*/ {line=$0; sub(/^[^:]*:[[:space:]]*/,"",line); sub(/\r$/,"",line); value=tolower(line)} END{print value}' "$headers")
+  case "$content_type" in
+    text/html*|application/json*|*+json*) DOWNLOAD_ERROR="Backup endpoint returned an error-like Content-Type: ${content_type:-unknown}"; return 1 ;;
+    application/octet-stream*|application/x-unifi-backup*|application/zip*|application/gzip*|application/x-gzip*|"") ;;
+    *) warn_event backup_content_type_unknown "Unrecognized backup Content-Type; continuing with size and content validation" content_type "$content_type" ;;
+  esac
+  if ! python3 - "$candidate" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 with p.open("rb") as stream:
@@ -282,36 +503,164 @@ low = head.lower()
 if low.startswith((b"<!doctype html", b"<html", b"<head", b"<body")):
     raise SystemExit(1)
 if head.startswith((b"{", b"[")):
-    # A System Config Backup is binary. Reject a JSON-looking prefix even when
-    # the captured prefix is not a complete JSON document.
     raise SystemExit(1)
 PY
-then
-  die "Backup response resembles an HTML login page or JSON error instead of a .unifi backup" 74
-fi
+  then
+    DOWNLOAD_ERROR="Backup response resembles an HTML login page or JSON error instead of a .unifi backup"
+    return 1
+  fi
+  backup_size=$candidate_size
+  return 0
+}
+
+DOWNLOAD_ERROR=""
+download_succeeded=false
+max_attempts=$((BACKUP_DOWNLOAD_RETRIES + 1))
+for ((attempt=1; attempt<=max_attempts; attempt++)); do
+  : > "$tmp_backup"
+  : > "$tmp_download_headers"
+  download_args=("${curl_common[@]}" --cookie "$tmp_cookie" --dump-header "$tmp_download_headers"
+    --output "$tmp_backup" --write-out '%{http_code}')
+  [[ -s $tmp_csrf_header ]] && download_args+=(--header "@$tmp_csrf_header")
+  log_event backup_download_started "Requesting a new UniFi OS system backup" attempt_count "$attempt" maximum_attempt_count "$max_attempts"
+  if download_http=$(curl "${download_args[@]}" "$UNIFI_URL/api/backup/download"); then
+    if [[ $download_http =~ ^2[0-9][0-9]$ ]]; then
+      if validate_download_body "$tmp_backup" "$tmp_download_headers"; then
+        download_succeeded=true
+        break
+      fi
+    else
+      DOWNLOAD_ERROR="Backup download failed: HTTP $download_http, $(describe_http_error "$download_http")"
+      if [[ ! $download_http =~ ^(429|500|502|503|504)$ ]]; then
+        break
+      fi
+    fi
+  else
+    curl_rc=$?
+    DOWNLOAD_ERROR="Backup download transport failure: $(ub_describe_curl_error "$curl_rc")"
+    if [[ $curl_rc =~ ^(35|51|58|59|60|64|66|77|80|82|83|90|91)$ ]]; then
+      break
+    fi
+  fi
+  if (( attempt < max_attempts )); then
+    warn_event backup_download_retry "Backup download validation failed; retrying with a fresh login" attempt_count "$attempt" retry_delay_seconds "$BACKUP_RETRY_DELAY" reason "$DOWNLOAD_ERROR"
+    sleep "$BACKUP_RETRY_DELAY"
+    authenticate
+  fi
+done
+[[ $download_succeeded == "true" ]] || die "$DOWNLOAD_ERROR" 74 backup_download_failed
 
 chmod 0600 "$tmp_backup"
 mv -- "$tmp_backup" "$final_backup"
 tmp_backup=""
 sha256=$(sha256sum "$final_backup" | awk '{print $1}')
-require_command find
-log "Backup successful"
-log "File: $final_backup"
-log "Size: $backup_size bytes"
-log "SHA256: $sha256"
+host_name=$(hostname -f 2>/dev/null || hostname)
+metadata_file="$final_backup.json"
 
-run_retention
+write_metadata() {
+  python3 - "$final_backup" "$metadata_file" "$RUN_ID" "$host_name" "$UNIFI_URL" "$backup_size" "$sha256" "$VERSION" \
+    "$REMOTE_STORAGE_TYPE" "$REMOTE_STATUS" "$REMOTE_METADATA_STATUS" "$ENABLE_EMAIL" "$EMAIL_STATUS" <<'PY'
+import datetime, json, os, pathlib, sys, tempfile
+
+(source_s, output_s, run_id, host, server, size, sha256, version, remote_type,
+ remote_status, remote_metadata_status, email_enabled, email_status) = sys.argv[1:]
+source, output = pathlib.Path(source_s), pathlib.Path(output_s)
+created = datetime.datetime.fromtimestamp(source.stat().st_mtime, datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+record = {
+    "schema_version": 1,
+    "backup": {
+        "id": run_id,
+        "type": "unifi_os_system",
+        "created_at": created,
+        "hostname": host,
+        "source": server,
+        "filename": source.name,
+        "size_bytes": int(size),
+        "sha256": sha256,
+    },
+    "tool": {"name": "unifi-os-backup", "version": version},
+    "remote_storage": {"type": remote_type, "backup_status": remote_status, "metadata_status": remote_metadata_status},
+    "email": {"enabled": email_enabled == "true", "status": email_status},
+}
+fd, temporary = tempfile.mkstemp(prefix=".metadata.", dir=str(output.parent))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(record, stream, indent=2, ensure_ascii=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, output)
+finally:
+    try: os.unlink(temporary)
+    except FileNotFoundError: pass
+PY
+}
+
+write_metadata || die "Could not write backup metadata" 73 metadata_error
+log_event backup_succeeded "Backup successful" file "$final_backup" size_bytes "$backup_size" sha256 "$sha256" metadata_file "$metadata_file" backup_id "$RUN_ID"
+log_event backup_file "File: $final_backup" file "$final_backup"
+log_event backup_size "Size: $backup_size bytes" size_bytes "$backup_size"
+log_event backup_checksum "SHA256: $sha256" sha256 "$sha256"
+log_event backup_metadata "Metadata: $metadata_file" metadata_file "$metadata_file" backup_id "$RUN_ID"
+
+if [[ $REMOTE_STORAGE_TYPE != "none" ]]; then
+  uploader="/usr/local/sbin/unifi-backup-upload"
+  [[ -x $uploader ]] || uploader="$script_dir/unifi-backup-upload"
+  [[ -x $uploader ]] || die "Remote storage is enabled but unifi-backup-upload is not installed" 69 remote_upload_failed
+  if "$uploader" --config "$CONFIG_FILE" --storage-config "$STORAGE_CONFIG_FILE" "$final_backup"; then
+    REMOTE_STATUS="success"
+    log_event remote_backup_succeeded "Backup uploaded to remote storage" backend "$REMOTE_STORAGE_TYPE"
+  else
+    upload_rc=$?
+    REMOTE_STATUS="failure"
+    write_metadata || true
+    if [[ $REMOTE_UPLOAD_REQUIRED == "true" ]]; then
+      die "Local backup succeeded, but required remote upload failed (exit $upload_rc); local backup retained" 75 remote_upload_failed
+    fi
+    warn_event remote_upload_failed "Remote upload failed; local backup retained and the run will continue" backend "$REMOTE_STORAGE_TYPE" exit_code "$upload_rc"
+  fi
+  write_metadata || die "Could not update backup metadata after remote upload" 73 metadata_error
+fi
 
 if [[ $ENABLE_EMAIL == "true" ]]; then
   mailer="/usr/local/sbin/unifi-mail-backup"
-  [[ -x $mailer ]] || mailer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/unifi-mail-backup"
-  [[ -x $mailer ]] || die "Email is enabled but unifi-mail-backup is not installed" 69
-  if "$mailer" --config "$CONFIG_FILE" --graph-config "$GRAPH_CONFIG_FILE" "$final_backup"; then
-    log "Backup notification email sent"
+  [[ -x $mailer ]] || mailer="$script_dir/unifi-mail-backup"
+  [[ -x $mailer ]] || die "Email is enabled but unifi-mail-backup is not installed" 69 email_failed
+  # The metadata attached to a successfully accepted message should describe
+  # that successful outcome. A failed request corrects the local sidecar below.
+  EMAIL_STATUS="success"
+  write_metadata || die "Could not update backup metadata before email delivery" 73 metadata_error
+  if "$mailer" --config "$CONFIG_FILE" --graph-config "$GRAPH_CONFIG_FILE" --metadata "$metadata_file" "$final_backup"; then
+    EMAIL_STATUS="success"
+    log_event email_succeeded "Backup notification email sent"
   else
     mail_rc=$?
-    die "Local backup succeeded, but email delivery failed (exit $mail_rc); backup retained at $final_backup" 75
+    EMAIL_STATUS="failure"
+    write_metadata || true
+    die "Local backup succeeded, but email delivery failed (exit $mail_rc); backup retained" 75 email_failed
   fi
+  write_metadata || die "Could not update backup metadata after email delivery" 73 metadata_error
 fi
 
+if [[ $REMOTE_STATUS == "success" ]]; then
+  # Write the expected final state before upload so the remote sidecar is
+  # self-consistent. On failure the local copy is corrected to "failure".
+  REMOTE_METADATA_STATUS="success"
+  write_metadata || die "Could not prepare final backup metadata" 73 metadata_error
+  if "$uploader" --config "$CONFIG_FILE" --storage-config "$STORAGE_CONFIG_FILE" "$metadata_file"; then
+    log_event remote_metadata_succeeded "Backup metadata uploaded to remote storage" backend "$REMOTE_STORAGE_TYPE"
+  else
+    upload_rc=$?
+    REMOTE_METADATA_STATUS="failure"
+    write_metadata || true
+    if [[ $REMOTE_UPLOAD_REQUIRED == "true" ]]; then
+      die "Remote backup exists, but required metadata upload failed (exit $upload_rc); local files retained" 75 remote_upload_failed
+    fi
+    warn_event remote_metadata_failed "Remote metadata upload failed; local files retained" backend "$REMOTE_STORAGE_TYPE" exit_code "$upload_rc"
+  fi
+  write_metadata || die "Could not finalize backup metadata" 73 metadata_error
+fi
+
+run_retention
 exit 0

@@ -22,10 +22,12 @@ jobs:
       - name: Bash tests
         run: bash tests/run.sh
       - name: ShellCheck
-        run: shellcheck install.sh update.sh uninstall.sh bin/* tests/*.sh tests/fixtures/mock-*
+        run: shellcheck install.sh update.sh uninstall.sh bin/* lib/*.sh tests/*.sh tests/fixtures/mock-*
       - name: Verify systemd units
         run: |
-          install -m 0755 bin/unifi-backup /usr/local/sbin/unifi-backup
+          install -m 0755 bin/unifi-backup bin/unifi-backup-upload bin/unifi-backup-notify bin/unifi-backup-status bin/unifi-mail-backup /usr/local/sbin/
+          install -d -m 0755 /usr/local/lib/unifi-backup /var/lib/unifi-backup
+          install -m 0644 lib/unifi-backup-common.sh /usr/local/lib/unifi-backup/common.sh
           install -d -m 0700 /var/backups/unifi
           install -m 0644 systemd/unifi-backup.service systemd/unifi-backup.timer /etc/systemd/system/
           systemd-analyze verify /etc/systemd/system/unifi-backup.service /etc/systemd/system/unifi-backup.timer

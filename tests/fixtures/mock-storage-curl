@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+[[ -n ${MOCK_STORAGE_CAPTURE:-} ]] || { echo "mock-storage-curl: capture directory missing" >&2; exit 64; }
+mkdir -p "$MOCK_STORAGE_CAPTURE"
+printf '%s\n' "$@" > "$MOCK_STORAGE_CAPTURE/argv"
+
+config_file=""
+output_file=""
+upload_file=""
+: > "$MOCK_STORAGE_CAPTURE/headers"
+while (($#)); do
+  case "$1" in
+    --config) config_file=$2; shift 2 ;;
+    --output) output_file=$2; shift 2 ;;
+    --upload-file) upload_file=$2; shift 2 ;;
+    --header)
+      if [[ $2 == @* ]]; then
+        cat "${2#@}" >> "$MOCK_STORAGE_CAPTURE/headers"
+      else
+        printf '%s\n' "$2" >> "$MOCK_STORAGE_CAPTURE/headers"
+      fi
+      shift 2
+      ;;
+    --write-out|--connect-timeout|--max-time|--request|--cacert) shift 2 ;;
+    --silent|--show-error) shift ;;
+    *) echo "mock-storage-curl: unexpected argument: $1" >&2; exit 64 ;;
+  esac
+done
+
+[[ -f $config_file && -f $upload_file && -n $output_file ]] || { echo "mock-storage-curl: required file argument missing" >&2; exit 65; }
+cp "$config_file" "$MOCK_STORAGE_CAPTURE/curl-config"
+printf '%s' "${upload_file##*/}" > "$MOCK_STORAGE_CAPTURE/upload-name"
+: > "$output_file"
+printf '%s' "${MOCK_STORAGE_HTTP_STATUS:-201}"

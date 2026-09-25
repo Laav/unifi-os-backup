@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+PROGRAM="unifi-backup-notify"
+CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
+NTFY_CONFIG_OVERRIDE=""
+EVENT=""
+MESSAGE=""
+EXIT_CODE="0"
+
+usage() {
+  echo "Usage: unifi-backup-notify [--config FILE] [--ntfy-config FILE] --event success|failure|recovery [--message TEXT] [--exit-code N]"
+}
+
+while (($#)); do
+  case "$1" in
+    --config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; CONFIG_FILE=$2; shift 2 ;;
+    --ntfy-config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; NTFY_CONFIG_OVERRIDE=$2; shift 2 ;;
+    --event) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; EVENT=$2; shift 2 ;;
+    --message) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; MESSAGE=$2; shift 2 ;;
+    --exit-code) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; EXIT_CODE=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "$PROGRAM: unknown option: $1" >&2; exit 64 ;;
+  esac
+done
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+common_file="$script_dir/../lib/unifi-backup-common.sh"
+[[ -r $common_file ]] || common_file="/usr/local/lib/unifi-backup/common.sh"
+[[ -r $common_file ]] || { echo "$PROGRAM: ERROR: common library not found" >&2; exit 69; }
+# shellcheck source=../lib/unifi-backup-common.sh
+source "$common_file"
+
+die() { local message=$1 code=${2:-1}; ub_error notification_failed "$message" exit_code "$code"; exit "$code"; }
+
+check_secret_file() {
+  local file=$1 mode owner expected=$EUID config_dir dir_mode dir_owner
+  [[ $file == /* && -f $file && ! -L $file ]] || die "Invalid configuration file: $file" 78
+  mode=$(stat -c '%a' "$file") || die "Cannot inspect $file" 78
+  owner=$(stat -c '%u' "$file") || die "Cannot inspect $file owner" 78
+  (( EUID == 0 )) && expected=0
+  [[ $owner == "$expected" ]] || die "$file must be owned by UID $expected" 78
+  (( (8#$mode & 8#077) == 0 )) || die "$file must have no group/other permissions" 78
+  config_dir=${file%/*}
+  dir_mode=$(stat -c '%a' "$config_dir") || die "Cannot inspect $config_dir" 78
+  dir_owner=$(stat -c '%u' "$config_dir") || die "Cannot inspect $config_dir owner" 78
+  [[ ! -L $config_dir && $dir_owner == "$expected" ]] || die "Invalid configuration directory: $config_dir" 78
+  (( (8#$dir_mode & 8#077) == 0 )) || die "$config_dir must have no group/other permissions" 78
+}
+
+for command_name in curl python3 stat hostname mktemp; do
+  command -v "$command_name" >/dev/null 2>&1 || die "Required command not found: $command_name" 69
+done
+check_secret_file "$CONFIG_FILE"
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+: "${LOG_FORMAT:=text}" "${NTFY_CONFIG_FILE:=/etc/unifi-backup/ntfy.env}"
+NTFY_CONFIG_FILE=${NTFY_CONFIG_OVERRIDE:-$NTFY_CONFIG_FILE}
+[[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 78
+[[ $EVENT == "success" || $EVENT == "failure" || $EVENT == "recovery" ]] || die "--event must be success, failure, or recovery" 64
+ub_is_nonnegative_int "$EXIT_CODE" || die "--exit-code must be a non-negative integer" 64
+check_secret_file "$NTFY_CONFIG_FILE"
+# shellcheck disable=SC1090
+source "$NTFY_CONFIG_FILE"
+
+: "${NTFY_BASE_URL:=}" "${NTFY_TOPIC:=}" "${NTFY_ACCESS_TOKEN:=}"
+: "${NTFY_ALLOW_ANONYMOUS:=false}" "${NTFY_CA_CERT:=}"
+[[ $NTFY_BASE_URL =~ ^https://[^/?#@[:space:]]+$ ]] || die "NTFY_BASE_URL must be an HTTPS origin without credentials, path, or query" 78
+[[ $NTFY_TOPIC =~ ^[A-Za-z0-9_-]{1,128}$ ]] || die "NTFY_TOPIC contains unsafe characters" 78
+ub_is_bool "$NTFY_ALLOW_ANONYMOUS" || die "NTFY_ALLOW_ANONYMOUS must be true or false" 78
+if [[ -z $NTFY_ACCESS_TOKEN || $NTFY_ACCESS_TOKEN == "CHANGE_ME" ]]; then
+  [[ $NTFY_ALLOW_ANONYMOUS == "true" ]] || die "NTFY_ACCESS_TOKEN is required unless NTFY_ALLOW_ANONYMOUS=true" 78
+  NTFY_ACCESS_TOKEN=""
+fi
+[[ -z $NTFY_CA_CERT || ( $NTFY_CA_CERT == /* && -f $NTFY_CA_CERT && -r $NTFY_CA_CERT ) ]] || die "NTFY_CA_CERT must be a readable absolute file" 78
+
+tmp_auth_header=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-header.XXXXXX")
+tmp_curl_config=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-curl.XXXXXX")
+tmp_response=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-response.XXXXXX")
+tmp_secret_input=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-secret.XXXXXX")
+cleanup() { local rc=$?; rm -f -- "$tmp_auth_header" "$tmp_curl_config" "$tmp_response" "$tmp_secret_input"; exit "$rc"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+printf '%s\0%s' "$NTFY_TOPIC" "$NTFY_ACCESS_TOKEN" > "$tmp_secret_input"
+python3 - "$NTFY_BASE_URL" "$tmp_curl_config" "$tmp_auth_header" "$tmp_secret_input" <<'PY'
+import sys, urllib.parse
+
+base, curl_out, auth_out, secret_file = sys.argv[1:]
+topic, token = (item.decode() for item in open(secret_file, "rb").read().split(b"\0", 1))
+url = base.rstrip("/") + "/" + urllib.parse.quote(topic, safe="-_")
+url = url.replace("\\", "\\\\").replace('"', '\\"')
+with open(curl_out, "w", encoding="utf-8") as stream:
+    stream.write(f'url = "{url}"\n')
+with open(auth_out, "w", encoding="utf-8") as stream:
+    if token:
+        stream.write("Authorization: Bearer " + token + "\n")
+PY
+chmod 0600 "$tmp_auth_header" "$tmp_curl_config"
+
+host_name=$(hostname -f 2>/dev/null || hostname)
+case "$EVENT" in
+  success) title="UniFi backup successful - $host_name"; priority="default" ;;
+  recovery) title="UniFi backup recovered - $host_name"; priority="high" ;;
+  failure) title="UniFi backup failed - $host_name"; priority="high" ;;
+esac
+MESSAGE=${MESSAGE//$'\n'/ }
+MESSAGE=${MESSAGE//$'\r'/ }
+MESSAGE=${MESSAGE:0:500}
+[[ -n $MESSAGE ]] || MESSAGE="Event: $EVENT; exit code: $EXIT_CODE"
+
+curl_args=(--silent --show-error --connect-timeout 15 --max-time 60 --request POST
+  --config "$tmp_curl_config" --header "Title: $title" --header "Priority: $priority"
+  --header 'Content-Type: text/plain; charset=utf-8' --data-binary @-
+  --output "$tmp_response" --write-out '%{http_code}')
+[[ -s $tmp_auth_header ]] && curl_args+=(--header "@$tmp_auth_header")
+[[ -n $NTFY_CA_CERT ]] && curl_args+=(--cacert "$NTFY_CA_CERT")
+
+if http_status=$(printf '%s' "$MESSAGE" | curl "${curl_args[@]}"); then :; else
+  rc=$?; die "ntfy transport failure: $(ub_describe_curl_error "$rc")" 69
+fi
+[[ $http_status =~ ^2[0-9][0-9]$ ]] || die "ntfy rejected the notification with HTTP $http_status" 75
+ub_info notification_sent "ntfy accepted the notification" channel ntfy notification_event "$EVENT" http_status_code "$http_status"

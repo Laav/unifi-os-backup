@@ -13,6 +13,8 @@ UMask=0077
 RuntimeDirectory=unifi-backup
 RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
+StateDirectory=unifi-backup
+StateDirectoryMode=0755
 
 # The job needs network access, read access to /etc and the host CA store, a
 # private temporary/runtime directory, and write access only to the default
@@ -24,7 +26,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/backups/unifi /run/unifi-backup
+ReadWritePaths=/var/backups/unifi /run/unifi-backup /var/lib/unifi-backup
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
