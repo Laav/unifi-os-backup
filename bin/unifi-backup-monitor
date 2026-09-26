@@ -69,6 +69,9 @@ metrics_file="$state_dir/unifi_backup.prom"
 tmp_metrics=$(mktemp "$state_dir/.metrics.XXXXXX")
 tmp_state=$(mktemp "$state_dir/.monitor-state.XXXXXX")
 tmp_status=$(mktemp "$state_dir/.status-evaluation.XXXXXX")
+# Invoked indirectly by the EXIT trap. ShellCheck releases report either the
+# function or its body as unreachable when they cannot resolve that indirection.
+# shellcheck disable=SC2317,SC2329
 cleanup() { local rc=$?; rm -f -- "$tmp_metrics" "$tmp_state" "$tmp_status"; exit "$rc"; }
 trap cleanup EXIT
 
