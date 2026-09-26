@@ -12,7 +12,33 @@ sudo systemctl start unifi-backup.service
 sudo journalctl -u unifi-backup.service -n 100 --no-pager
 ```
 
-The updater replaces installed executables, the shared library, and units. It does not replace or remove existing files in `/etc/unifi-backup` and never changes `/var/backups/unifi`. It creates newly introduced optional `storage.env` and `ntfy.env` only when absent, using fictitious placeholders and mode 0600. New main settings appear in `config/unifi-backup.env.example`; merge the settings you intend to use manually.
+The updater replaces installed executables, the shared library, and units. It does not replace or remove existing files in `/etc/unifi-backup` and never changes `/var/backups/unifi`. It creates newly introduced optional configuration examples only when absent, using fictitious placeholders and mode 0600. New main settings appear in `config/unifi-backup.env.example`; merge the settings you intend to use manually.
+
+## Upgrading from 1.1.0 to 1.2.0
+
+The safe defaults keep encryption and webhooks disabled. After `update.sh`, review and optionally add:
+
+```bash
+ENCRYPTION_TYPE="none"
+AGE_RECIPIENTS_FILE="/etc/unifi-backup/age-recipients.txt"
+CATALOG_FILE="/var/lib/unifi-backup/catalog.json"
+STALE_WARNING_HOURS="192"
+STALE_CRITICAL_HOURS="216"
+NOTIFY_ON_STALE="true"
+ENABLE_WEBHOOK="false"
+WEBHOOK_CONFIG_FILE="/etc/unifi-backup/webhook.env"
+```
+
+The updater creates missing `webhook.env` and `age-recipients.txt` examples but never replaces existing files. It installs and enables the monitor timer without starting a previously inactive timer. After choosing thresholds:
+
+```bash
+sudo unifi-backup-check --live
+sudo systemctl start unifi-backup.service
+sudo systemctl enable --now unifi-backup-monitor.timer
+sudo unifi-backup-catalog --print
+```
+
+Install `age` and complete the separate recovery-key procedure in [ENCRYPTION.md](ENCRYPTION.md) before changing `ENCRYPTION_TYPE` to `age`. Test decryption and a non-production restore before depending on encrypted backups.
 
 ## Upgrading from 1.0.x to 1.1.0
 

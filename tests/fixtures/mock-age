@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+encrypt=false
+recipients_file=""
+input_file=""
+while (($#)); do
+  case "$1" in
+    --encrypt) encrypt=true; shift ;;
+    --recipients-file) recipients_file=$2; shift 2 ;;
+    --*) echo "mock-age: unexpected option: $1" >&2; exit 64 ;;
+    *) [[ -z $input_file ]] || { echo "mock-age: multiple inputs" >&2; exit 64; }; input_file=$1; shift ;;
+  esac
+done
+[[ $encrypt == "true" && -s $recipients_file && -s $input_file ]] || { echo "mock-age: required input missing" >&2; exit 65; }
+[[ ${MOCK_AGE_FAIL:-false} != "true" ]] || exit 70
+printf 'age-encryption.org/v1\n'
+printf 'mock-recipient-stanza\n'
+cat -- "$input_file"

@@ -5,18 +5,29 @@ umask 077
 PROGRAM="unifi-backup-notify"
 CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
 NTFY_CONFIG_OVERRIDE=""
+WEBHOOK_CONFIG_OVERRIDE=""
+STATUS_FILE_OVERRIDE=""
+METADATA_FILE=""
 EVENT=""
 MESSAGE=""
 EXIT_CODE="0"
 
 usage() {
-  echo "Usage: unifi-backup-notify [--config FILE] [--ntfy-config FILE] --event success|failure|recovery [--message TEXT] [--exit-code N]"
+  cat <<'EOF'
+Usage: unifi-backup-notify [--config FILE] [--ntfy-config FILE]
+       [--webhook-config FILE] [--status-file FILE] [--metadata FILE]
+       --event success|failure|recovery|stale_warning|stale_critical|stale_recovery
+       [--message TEXT] [--exit-code N]
+EOF
 }
 
 while (($#)); do
   case "$1" in
     --config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; CONFIG_FILE=$2; shift 2 ;;
     --ntfy-config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; NTFY_CONFIG_OVERRIDE=$2; shift 2 ;;
+    --webhook-config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; WEBHOOK_CONFIG_OVERRIDE=$2; shift 2 ;;
+    --status-file) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; STATUS_FILE_OVERRIDE=$2; shift 2 ;;
+    --metadata) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; METADATA_FILE=$2; shift 2 ;;
     --event) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; EVENT=$2; shift 2 ;;
     --message) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; MESSAGE=$2; shift 2 ;;
     --exit-code) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; EXIT_CODE=$2; shift 2 ;;
@@ -56,72 +67,174 @@ done
 check_secret_file "$CONFIG_FILE"
 # shellcheck disable=SC1090
 source "$CONFIG_FILE"
-: "${LOG_FORMAT:=text}" "${NTFY_CONFIG_FILE:=/etc/unifi-backup/ntfy.env}"
+: "${LOG_FORMAT:=text}" "${STATUS_FILE:=/var/lib/unifi-backup/status.json}" "${UNIFI_URL:=}"
+: "${ENABLE_NTFY:=false}" "${NTFY_CONFIG_FILE:=/etc/unifi-backup/ntfy.env}"
+: "${ENABLE_WEBHOOK:=false}" "${WEBHOOK_CONFIG_FILE:=/etc/unifi-backup/webhook.env}"
 NTFY_CONFIG_FILE=${NTFY_CONFIG_OVERRIDE:-$NTFY_CONFIG_FILE}
+WEBHOOK_CONFIG_FILE=${WEBHOOK_CONFIG_OVERRIDE:-$WEBHOOK_CONFIG_FILE}
+STATUS_FILE=${STATUS_FILE_OVERRIDE:-$STATUS_FILE}
+
 [[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 78
-[[ $EVENT == "success" || $EVENT == "failure" || $EVENT == "recovery" ]] || die "--event must be success, failure, or recovery" 64
+[[ $EVENT =~ ^(success|failure|recovery|stale_warning|stale_critical|stale_recovery)$ ]] || die "Unsupported notification event" 64
 ub_is_nonnegative_int "$EXIT_CODE" || die "--exit-code must be a non-negative integer" 64
-check_secret_file "$NTFY_CONFIG_FILE"
-# shellcheck disable=SC1090
-source "$NTFY_CONFIG_FILE"
-
-: "${NTFY_BASE_URL:=}" "${NTFY_TOPIC:=}" "${NTFY_ACCESS_TOKEN:=}"
-: "${NTFY_ALLOW_ANONYMOUS:=false}" "${NTFY_CA_CERT:=}"
-[[ $NTFY_BASE_URL =~ ^https://[^/?#@[:space:]]+$ ]] || die "NTFY_BASE_URL must be an HTTPS origin without credentials, path, or query" 78
-[[ $NTFY_TOPIC =~ ^[A-Za-z0-9_-]{1,128}$ ]] || die "NTFY_TOPIC contains unsafe characters" 78
-ub_is_bool "$NTFY_ALLOW_ANONYMOUS" || die "NTFY_ALLOW_ANONYMOUS must be true or false" 78
-if [[ -z $NTFY_ACCESS_TOKEN || $NTFY_ACCESS_TOKEN == "CHANGE_ME" ]]; then
-  [[ $NTFY_ALLOW_ANONYMOUS == "true" ]] || die "NTFY_ACCESS_TOKEN is required unless NTFY_ALLOW_ANONYMOUS=true" 78
-  NTFY_ACCESS_TOKEN=""
+ub_is_bool "$ENABLE_NTFY" || die "ENABLE_NTFY must be true or false" 78
+ub_is_bool "$ENABLE_WEBHOOK" || die "ENABLE_WEBHOOK must be true or false" 78
+[[ $ENABLE_NTFY == "true" || $ENABLE_WEBHOOK == "true" ]] || die "No notification channel is enabled" 78
+[[ $STATUS_FILE == /* ]] || die "STATUS_FILE must be absolute" 78
+if [[ -n $METADATA_FILE ]]; then
+  [[ $METADATA_FILE == /* && -f $METADATA_FILE && ! -L $METADATA_FILE ]] || die "Invalid metadata file" 66
+  (( $(stat -c '%s' "$METADATA_FILE") <= 65536 )) || die "Metadata file exceeds safety limit" 65
 fi
-[[ -z $NTFY_CA_CERT || ( $NTFY_CA_CERT == /* && -f $NTFY_CA_CERT && -r $NTFY_CA_CERT ) ]] || die "NTFY_CA_CERT must be a readable absolute file" 78
 
-tmp_auth_header=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-header.XXXXXX")
-tmp_curl_config=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-curl.XXXXXX")
-tmp_response=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-response.XXXXXX")
-tmp_secret_input=$(mktemp "${TMPDIR:-/tmp}/unifi-ntfy-secret.XXXXXX")
-cleanup() { local rc=$?; rm -f -- "$tmp_auth_header" "$tmp_curl_config" "$tmp_response" "$tmp_secret_input"; exit "$rc"; }
+MESSAGE=${MESSAGE//$'\n'/ }
+MESSAGE=${MESSAGE//$'\r'/ }
+MESSAGE=${MESSAGE:0:500}
+[[ -n $MESSAGE ]] || MESSAGE="Event: $EVENT; exit code: $EXIT_CODE"
+host_name=$(hostname -f 2>/dev/null || hostname)
+
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/unifi-notify.XXXXXX")
+cleanup() {
+  local rc=$?
+  rm -f -- "$tmp_dir/ntfy-header" "$tmp_dir/ntfy-curl" "$tmp_dir/ntfy-response" "$tmp_dir/ntfy-secret"
+  rm -f -- "$tmp_dir/webhook-payload" "$tmp_dir/webhook-headers" "$tmp_dir/webhook-curl" "$tmp_dir/webhook-response" "$tmp_dir/webhook-secrets"
+  rmdir -- "$tmp_dir" 2>/dev/null || true
+  exit "$rc"
+}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
-printf '%s\0%s' "$NTFY_TOPIC" "$NTFY_ACCESS_TOKEN" > "$tmp_secret_input"
-python3 - "$NTFY_BASE_URL" "$tmp_curl_config" "$tmp_auth_header" "$tmp_secret_input" <<'PY'
-import sys, urllib.parse
+send_ntfy() {
+  check_secret_file "$NTFY_CONFIG_FILE"
+  # shellcheck disable=SC1090
+  source "$NTFY_CONFIG_FILE"
+  : "${NTFY_BASE_URL:=}" "${NTFY_TOPIC:=}" "${NTFY_ACCESS_TOKEN:=}"
+  : "${NTFY_ALLOW_ANONYMOUS:=false}" "${NTFY_CA_CERT:=}"
+  [[ $NTFY_BASE_URL =~ ^https://[^/?#@[:space:]]+$ ]] || die "NTFY_BASE_URL must be an HTTPS origin without credentials, path, or query" 78
+  [[ $NTFY_TOPIC =~ ^[A-Za-z0-9_-]{1,128}$ ]] || die "NTFY_TOPIC contains unsafe characters" 78
+  ub_is_bool "$NTFY_ALLOW_ANONYMOUS" || die "NTFY_ALLOW_ANONYMOUS must be true or false" 78
+  if [[ -z $NTFY_ACCESS_TOKEN || $NTFY_ACCESS_TOKEN == "CHANGE_ME" ]]; then
+    [[ $NTFY_ALLOW_ANONYMOUS == "true" ]] || die "NTFY_ACCESS_TOKEN is required unless NTFY_ALLOW_ANONYMOUS=true" 78
+    NTFY_ACCESS_TOKEN=""
+  fi
+  [[ -z $NTFY_CA_CERT || ( $NTFY_CA_CERT == /* && -f $NTFY_CA_CERT && -r $NTFY_CA_CERT ) ]] || die "NTFY_CA_CERT must be a readable absolute file" 78
 
+  local auth_header="$tmp_dir/ntfy-header" curl_config="$tmp_dir/ntfy-curl" response="$tmp_dir/ntfy-response" secret_input="$tmp_dir/ntfy-secret"
+  printf '%s\0%s' "$NTFY_TOPIC" "$NTFY_ACCESS_TOKEN" > "$secret_input"
+  python3 - "$NTFY_BASE_URL" "$curl_config" "$auth_header" "$secret_input" <<'PY'
+import sys, urllib.parse
 base, curl_out, auth_out, secret_file = sys.argv[1:]
 topic, token = (item.decode() for item in open(secret_file, "rb").read().split(b"\0", 1))
 url = base.rstrip("/") + "/" + urllib.parse.quote(topic, safe="-_")
 url = url.replace("\\", "\\\\").replace('"', '\\"')
-with open(curl_out, "w", encoding="utf-8") as stream:
-    stream.write(f'url = "{url}"\n')
+with open(curl_out, "w", encoding="utf-8") as stream: stream.write(f'url = "{url}"\n')
 with open(auth_out, "w", encoding="utf-8") as stream:
-    if token:
-        stream.write("Authorization: Bearer " + token + "\n")
+    if token: stream.write("Authorization: Bearer " + token + "\n")
 PY
-chmod 0600 "$tmp_auth_header" "$tmp_curl_config"
+  chmod 0600 "$auth_header" "$curl_config" "$secret_input"
 
-host_name=$(hostname -f 2>/dev/null || hostname)
-case "$EVENT" in
-  success) title="UniFi backup successful - $host_name"; priority="default" ;;
-  recovery) title="UniFi backup recovered - $host_name"; priority="high" ;;
-  failure) title="UniFi backup failed - $host_name"; priority="high" ;;
-esac
-MESSAGE=${MESSAGE//$'\n'/ }
-MESSAGE=${MESSAGE//$'\r'/ }
-MESSAGE=${MESSAGE:0:500}
-[[ -n $MESSAGE ]] || MESSAGE="Event: $EVENT; exit code: $EXIT_CODE"
+  local title priority http_status rc
+  case "$EVENT" in
+    success) title="UniFi backup successful - $host_name"; priority="default" ;;
+    recovery|stale_recovery) title="UniFi backup recovered - $host_name"; priority="high" ;;
+    failure) title="UniFi backup failed - $host_name"; priority="high" ;;
+    *) title="UniFi backup stale - $host_name"; priority="high" ;;
+  esac
+  local -a args=(--silent --show-error --connect-timeout 15 --max-time 60 --request POST
+    --config "$curl_config" --header "Title: $title" --header "Priority: $priority"
+    --header 'Content-Type: text/plain; charset=utf-8' --data-binary @-
+    --output "$response" --write-out '%{http_code}')
+  [[ -s $auth_header ]] && args+=(--header "@$auth_header")
+  [[ -n $NTFY_CA_CERT ]] && args+=(--cacert "$NTFY_CA_CERT")
+  if http_status=$(printf '%s' "$MESSAGE" | curl "${args[@]}"); then :; else
+    rc=$?; ub_error notification_channel_failed "ntfy transport failure: $(ub_describe_curl_error "$rc")" channel ntfy; return 1
+  fi
+  if [[ ! $http_status =~ ^2[0-9][0-9]$ ]]; then
+    ub_error notification_channel_failed "ntfy rejected the notification with HTTP $http_status" channel ntfy http_status_code "$http_status"; return 1
+  fi
+  ub_info notification_sent "ntfy accepted the notification" channel ntfy notification_event "$EVENT" http_status_code "$http_status"
+}
 
-curl_args=(--silent --show-error --connect-timeout 15 --max-time 60 --request POST
-  --config "$tmp_curl_config" --header "Title: $title" --header "Priority: $priority"
-  --header 'Content-Type: text/plain; charset=utf-8' --data-binary @-
-  --output "$tmp_response" --write-out '%{http_code}')
-[[ -s $tmp_auth_header ]] && curl_args+=(--header "@$tmp_auth_header")
-[[ -n $NTFY_CA_CERT ]] && curl_args+=(--cacert "$NTFY_CA_CERT")
+send_webhook() {
+  check_secret_file "$WEBHOOK_CONFIG_FILE"
+  # shellcheck disable=SC1090
+  source "$WEBHOOK_CONFIG_FILE"
+  : "${WEBHOOK_URL:=}" "${WEBHOOK_BEARER_TOKEN:=}" "${WEBHOOK_HMAC_SECRET:=}"
+  : "${WEBHOOK_CA_CERT:=}" "${WEBHOOK_CONNECT_TIMEOUT:=15}" "${WEBHOOK_MAX_TIME:=60}"
+  ub_is_positive_int "$WEBHOOK_CONNECT_TIMEOUT" || die "WEBHOOK_CONNECT_TIMEOUT must be a positive integer" 78
+  ub_is_positive_int "$WEBHOOK_MAX_TIME" || die "WEBHOOK_MAX_TIME must be a positive integer" 78
+  (( WEBHOOK_MAX_TIME >= WEBHOOK_CONNECT_TIMEOUT )) || die "WEBHOOK_MAX_TIME must be at least WEBHOOK_CONNECT_TIMEOUT" 78
+  [[ $WEBHOOK_BEARER_TOKEN != "CHANGE_ME" && $WEBHOOK_HMAC_SECRET != "CHANGE_ME" ]] || die "Replace webhook secret placeholders" 78
+  [[ -z $WEBHOOK_CA_CERT || ( $WEBHOOK_CA_CERT == /* && -f $WEBHOOK_CA_CERT && -r $WEBHOOK_CA_CERT ) ]] || die "WEBHOOK_CA_CERT must be a readable absolute file" 78
 
-if http_status=$(printf '%s' "$MESSAGE" | curl "${curl_args[@]}"); then :; else
-  rc=$?; die "ntfy transport failure: $(ub_describe_curl_error "$rc")" 69
-fi
-[[ $http_status =~ ^2[0-9][0-9]$ ]] || die "ntfy rejected the notification with HTTP $http_status" 75
-ub_info notification_sent "ntfy accepted the notification" channel ntfy notification_event "$EVENT" http_status_code "$http_status"
+  local payload="$tmp_dir/webhook-payload" headers="$tmp_dir/webhook-headers" curl_config="$tmp_dir/webhook-curl"
+  local response="$tmp_dir/webhook-response" secret_input="$tmp_dir/webhook-secrets" http_status rc
+  printf '%s\0%s' "$WEBHOOK_BEARER_TOKEN" "$WEBHOOK_HMAC_SECRET" > "$secret_input"
+  python3 - "$WEBHOOK_URL" "$curl_config" "$payload" "$headers" "$secret_input" "$EVENT" "$MESSAGE" "$EXIT_CODE" "$host_name" "$STATUS_FILE" "$METADATA_FILE" "$UNIFI_URL" <<'PY'
+import datetime, hashlib, hmac, json, pathlib, sys, urllib.parse, uuid
+(url, curl_path, payload_path, headers_path, secrets_path, event, message,
+ exit_code, hostname, status_path, metadata_path, controller) = sys.argv[1:]
+parts = urllib.parse.urlsplit(url)
+if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment or any(c.isspace() for c in url):
+    raise SystemExit("WEBHOOK_URL must be an HTTPS URL without credentials, fragment, or whitespace")
+def load_optional(path, limit):
+    if not path:
+        return None
+    candidate = pathlib.Path(path)
+    try:
+        if not candidate.is_file() or candidate.is_symlink() or candidate.stat().st_size > limit:
+            return None
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+status = load_optional(status_path, 1048576)
+metadata = load_optional(metadata_path, 65536)
+mapping = {"success": "success", "recovery": "success", "stale_recovery": "success",
+           "failure": "failed", "stale_warning": "warning", "stale_critical": "critical"}
+document = {
+    "schema_version": 1,
+    "delivery_id": str(uuid.uuid4()),
+    "occurred_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    "event": event,
+    "status": mapping[event],
+    "message": message,
+    "exit_code": int(exit_code),
+    "hostname": hostname,
+    "controller": (metadata or {}).get("backup", {}).get("source", controller),
+    "backup": (metadata or {}).get("backup"),
+    "encryption": (metadata or {}).get("encryption"),
+    "remote_storage": (metadata or {}).get("remote_storage"),
+    "monitoring": (status or {}).get("monitoring"),
+    "last_success": (status or {}).get("last_success"),
+}
+body = json.dumps(document, separators=(",", ":"), ensure_ascii=True).encode()
+pathlib.Path(payload_path).write_bytes(body)
+escaped = url.replace("\\", "\\\\").replace('"', '\\"')
+pathlib.Path(curl_path).write_text(f'url = "{escaped}"\n', encoding="utf-8")
+token, secret = pathlib.Path(secrets_path).read_bytes().split(b"\0", 1)
+lines = []
+if token: lines.append("Authorization: Bearer " + token.decode())
+if secret: lines.append("X-UniFi-Backup-Signature: sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest())
+pathlib.Path(headers_path).write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+PY
+  chmod 0600 "$payload" "$headers" "$curl_config" "$secret_input"
+  local -a args=(--silent --show-error --connect-timeout "$WEBHOOK_CONNECT_TIMEOUT" --max-time "$WEBHOOK_MAX_TIME"
+    --request POST --config "$curl_config" --header 'Content-Type: application/json'
+    --header 'User-Agent: unifi-os-backup-webhook/1.0' --data-binary "@$payload"
+    --output "$response" --write-out '%{http_code}')
+  [[ -s $headers ]] && args+=(--header "@$headers")
+  [[ -n $WEBHOOK_CA_CERT ]] && args+=(--cacert "$WEBHOOK_CA_CERT")
+  if http_status=$(curl "${args[@]}"); then :; else
+    rc=$?; ub_error notification_channel_failed "webhook transport failure: $(ub_describe_curl_error "$rc")" channel webhook; return 1
+  fi
+  if [[ ! $http_status =~ ^2[0-9][0-9]$ ]]; then
+    ub_error notification_channel_failed "webhook rejected the event with HTTP $http_status" channel webhook http_status_code "$http_status"; return 1
+  fi
+  ub_info notification_sent "Webhook accepted the notification" channel webhook notification_event "$EVENT" http_status_code "$http_status"
+}
+
+failed=0
+if [[ $ENABLE_NTFY == "true" ]]; then send_ntfy || failed=1; fi
+if [[ $ENABLE_WEBHOOK == "true" ]]; then send_webhook || failed=1; fi
+(( failed == 0 )) || exit 75

@@ -53,10 +53,10 @@ if [[ ! -f $source_dir/bin/unifi-backup || ! -f $source_dir/systemd/unifi-backup
   source_dir=$INSTALL_DIR
 fi
 
-for required in bin/unifi-backup bin/unifi-mail-backup bin/unifi-backup-check bin/unifi-backup-upload bin/unifi-backup-notify bin/unifi-backup-status lib/unifi-backup-common.sh config/unifi-backup.env.example config/graph.env.example config/storage.env.example config/ntfy.env.example systemd/unifi-backup.service systemd/unifi-backup.timer; do
+for required in bin/unifi-backup bin/unifi-mail-backup bin/unifi-backup-check bin/unifi-backup-upload bin/unifi-backup-notify bin/unifi-backup-status bin/unifi-backup-monitor bin/unifi-backup-catalog lib/unifi-backup-common.sh config/unifi-backup.env.example config/graph.env.example config/storage.env.example config/ntfy.env.example config/webhook.env.example config/age-recipients.txt.example systemd/unifi-backup.service systemd/unifi-backup.timer systemd/unifi-backup-monitor.service systemd/unifi-backup-monitor.timer; do
   [[ -f $source_dir/$required ]] || die "incomplete source tree; missing $required" 66
 done
-for script in "$source_dir/bin/unifi-backup" "$source_dir/bin/unifi-mail-backup" "$source_dir/bin/unifi-backup-check" "$source_dir/bin/unifi-backup-upload" "$source_dir/bin/unifi-backup-notify" "$source_dir/bin/unifi-backup-status" "$source_dir/lib/unifi-backup-common.sh"; do
+for script in "$source_dir/bin/unifi-backup" "$source_dir/bin/unifi-mail-backup" "$source_dir/bin/unifi-backup-check" "$source_dir/bin/unifi-backup-upload" "$source_dir/bin/unifi-backup-notify" "$source_dir/bin/unifi-backup-status" "$source_dir/bin/unifi-backup-monitor" "$source_dir/bin/unifi-backup-catalog" "$source_dir/lib/unifi-backup-common.sh"; do
   bash -n "$script" || die "Bash syntax validation failed: $script" 65
 done
 
@@ -67,10 +67,14 @@ install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-check" /usr/local/
 install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-upload" /usr/local/sbin/unifi-backup-upload
 install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-notify" /usr/local/sbin/unifi-backup-notify
 install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-status" /usr/local/sbin/unifi-backup-status
+install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-monitor" /usr/local/sbin/unifi-backup-monitor
+install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-catalog" /usr/local/sbin/unifi-backup-catalog
 install -d -o root -g root -m 0755 /usr/local/lib/unifi-backup
 install -o root -g root -m 0644 "$source_dir/lib/unifi-backup-common.sh" /usr/local/lib/unifi-backup/common.sh
 install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup.service" /etc/systemd/system/unifi-backup.service
 install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup.timer" /etc/systemd/system/unifi-backup.timer
+install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup-monitor.service" /etc/systemd/system/unifi-backup-monitor.service
+install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup-monitor.timer" /etc/systemd/system/unifi-backup-monitor.timer
 
 install -d -o root -g root -m 0700 /etc/unifi-backup
 install -d -o root -g root -m 0700 /var/backups/unifi
@@ -99,15 +103,28 @@ if [[ ! -e /etc/unifi-backup/ntfy.env ]]; then
 else
   log "Preserved existing /etc/unifi-backup/ntfy.env"
 fi
-chown root:root /etc/unifi-backup /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /var/backups/unifi /var/lib/unifi-backup
+if [[ ! -e /etc/unifi-backup/webhook.env ]]; then
+  install -o root -g root -m 0600 "$source_dir/config/webhook.env.example" /etc/unifi-backup/webhook.env
+  log "Created optional /etc/unifi-backup/webhook.env with placeholders"
+else
+  log "Preserved existing /etc/unifi-backup/webhook.env"
+fi
+if [[ ! -e /etc/unifi-backup/age-recipients.txt ]]; then
+  install -o root -g root -m 0600 "$source_dir/config/age-recipients.txt.example" /etc/unifi-backup/age-recipients.txt
+  log "Created optional /etc/unifi-backup/age-recipients.txt placeholder"
+else
+  log "Preserved existing /etc/unifi-backup/age-recipients.txt"
+fi
+chown root:root /etc/unifi-backup /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /etc/unifi-backup/webhook.env /etc/unifi-backup/age-recipients.txt /var/backups/unifi /var/lib/unifi-backup
 chmod 0700 /etc/unifi-backup /var/backups/unifi
 chmod 0755 /var/lib/unifi-backup
-chmod 0600 /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env
+chmod 0600 /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /etc/unifi-backup/webhook.env /etc/unifi-backup/age-recipients.txt
 
 systemctl daemon-reload
 if [[ $ENABLE_TIMER == "true" ]]; then
   systemctl enable unifi-backup.timer
-  log "Enabled unifi-backup.timer (it is not started until configuration is validated)"
+  systemctl enable unifi-backup-monitor.timer
+  log "Enabled backup and freshness-monitor timers (they are not started until configuration is validated)"
 else
   log "Timer installation completed without enabling it"
 fi
@@ -119,4 +136,5 @@ Installation complete.
   2. Run: sudo unifi-backup-check --live
   3. Run: sudo systemctl start unifi-backup.service
   4. Start scheduling: sudo systemctl start unifi-backup.timer
+  5. Start freshness checks: sudo systemctl start unifi-backup-monitor.timer
 EOF

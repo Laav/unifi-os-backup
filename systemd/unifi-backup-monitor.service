@@ -1,0 +1,38 @@
+[Unit]
+Description=Evaluate UniFi backup freshness and send transition notifications
+Documentation=https://github.com/Laav/unifi-os-backup/blob/main/docs/MONITORING.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/unifi-backup-monitor
+User=root
+Group=root
+UMask=0077
+StateDirectory=unifi-backup
+StateDirectoryMode=0755
+
+# WARNING and CRITICAL are monitoring outcomes, not execution failures. UNKNOWN
+# remains a failed service run so malformed or missing state is visible.
+SuccessExitStatus=1 2
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/unifi-backup
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+TimeoutStartSec=2min

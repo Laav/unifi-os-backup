@@ -12,6 +12,7 @@ chmod 0755 "$tmp/bin/curl" "$tmp/bin/hostname"
 config="$tmp/unifi-backup.env"
 sed -e 's#https://unifi.example.invalid:11443#https://127.0.0.1:11443#' \
     -e 's#UNIFI_PASSWORD="CHANGE_ME"#UNIFI_PASSWORD="test-only"#' \
+    -e 's#ENABLE_NTFY="false"#ENABLE_NTFY="true"#' \
     -e "s#NTFY_CONFIG_FILE=\"/etc/unifi-backup/ntfy.env\"#NTFY_CONFIG_FILE=\"$tmp/ntfy.env\"#" \
     "$root/config/unifi-backup.env.example" > "$config"
 ntfy_config="$tmp/ntfy.env"

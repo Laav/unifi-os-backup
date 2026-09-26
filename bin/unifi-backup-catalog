@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+PROGRAM="unifi-backup-catalog"
+BACKUP_DIR="/var/backups/unifi"
+CATALOG_FILE="/var/lib/unifi-backup/catalog.json"
+STATUS_FILE="/var/lib/unifi-backup/status.json"
+PRINT_CATALOG=false
+
+usage() {
+  cat <<'EOF'
+Usage: unifi-backup-catalog [--backup-dir DIR] [--catalog-file FILE]
+                            [--status-file FILE] [--print]
+
+Rebuilds the machine-readable catalog from managed metadata sidecars.
+EOF
+}
+
+while (($#)); do
+  case "$1" in
+    --backup-dir) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; BACKUP_DIR=$2; shift 2 ;;
+    --catalog-file) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; CATALOG_FILE=$2; shift 2 ;;
+    --status-file) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; STATUS_FILE=$2; shift 2 ;;
+    --print) PRINT_CATALOG=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "$PROGRAM: unknown option: $1" >&2; exit 64 ;;
+  esac
+done
+
+[[ $BACKUP_DIR == /* && $BACKUP_DIR != "/" && -d $BACKUP_DIR && ! -L $BACKUP_DIR ]] || {
+  echo "$PROGRAM: invalid backup directory" >&2; exit 78;
+}
+[[ $CATALOG_FILE == /* && ${CATALOG_FILE##*/} == "catalog.json" ]] || {
+  echo "$PROGRAM: catalog path must be absolute and end in catalog.json" >&2; exit 78;
+}
+[[ $STATUS_FILE == /* ]] || { echo "$PROGRAM: status path must be absolute" >&2; exit 78; }
+catalog_dir=${CATALOG_FILE%/*}
+mkdir -p -- "$catalog_dir"
+[[ -d $catalog_dir && ! -L $catalog_dir ]] || { echo "$PROGRAM: invalid catalog directory" >&2; exit 73; }
+command -v python3 >/dev/null 2>&1 || { echo "$PROGRAM: python3 not found" >&2; exit 69; }
+
+python3 - "$BACKUP_DIR" "$CATALOG_FILE" "$STATUS_FILE" <<'PY'
+import datetime
+import json
+import os
+import pathlib
+import re
+import sys
+import tempfile
+
+backup_dir = pathlib.Path(sys.argv[1])
+catalog_path = pathlib.Path(sys.argv[2])
+status_path = pathlib.Path(sys.argv[3])
+pattern = re.compile(r"^unifi_os_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.unifi(?:\.age)?\.json$")
+
+entries = []
+for sidecar in sorted(backup_dir.iterdir()):
+    if not pattern.fullmatch(sidecar.name) or not sidecar.is_file() or sidecar.is_symlink():
+        continue
+    if sidecar.stat().st_size > 65536:
+        continue
+    try:
+        metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        backup = metadata["backup"]
+        filename = str(backup["filename"])
+        artifact = backup_dir / filename
+        if sidecar.name != filename + ".json":
+            continue
+        if artifact.parent != backup_dir or not artifact.is_file() or artifact.is_symlink():
+            continue
+        encryption = metadata.get("encryption") or {"type": "none", "enabled": False}
+        remote = metadata.get("remote_storage") or {}
+        verification = metadata.get("verification") or {"download_validation": "success"}
+        entries.append({
+            "id": str(backup.get("id", "")),
+            "controller": str(backup.get("source", "")),
+            "hostname": str(backup.get("hostname", "")),
+            "created_at": str(backup.get("created_at", "")),
+            "filename": filename,
+            "size_bytes": int(artifact.stat().st_size),
+            "sha256": str(backup.get("sha256", "")),
+            "encryption": {
+                "enabled": bool(encryption.get("enabled", False)),
+                "type": str(encryption.get("type", "none")),
+            },
+            "storage": {
+                "local": "present",
+                "remote_type": str(remote.get("type", "none")),
+                "remote_status": str(remote.get("backup_status", "unknown")),
+                "metadata_status": str(remote.get("metadata_status", "unknown")),
+            },
+            "verification": {
+                "download_validation": str(verification.get("download_validation", "unknown")),
+                "checksum_algorithm": "SHA256",
+            },
+        })
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+        continue
+
+entries.sort(key=lambda item: (item["created_at"], item["filename"]), reverse=True)
+status = None
+try:
+    if status_path.is_file() and not status_path.is_symlink() and status_path.stat().st_size <= 1048576:
+        parsed = json.loads(status_path.read_text(encoding="utf-8"))
+        status = {
+            "last_run": parsed.get("last_run"),
+            "last_success": parsed.get("last_success"),
+        }
+except (OSError, ValueError, json.JSONDecodeError):
+    status = None
+
+document = {
+    "schema_version": 1,
+    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    "summary": {
+        "backup_count": len(entries),
+        "encrypted_count": sum(1 for entry in entries if entry["encryption"]["enabled"]),
+        "remote_success_count": sum(1 for entry in entries if entry["storage"]["remote_status"] == "success"),
+    },
+    "status": status,
+    "backups": entries,
+}
+
+fd, temporary = tempfile.mkstemp(prefix=".catalog.", dir=str(catalog_path.parent))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        json.dump(document, stream, indent=2, ensure_ascii=True)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, catalog_path)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
+
+if [[ $PRINT_CATALOG == "true" ]]; then
+  cat -- "$CATALOG_FILE"
+else
+  printf '%s: catalog rebuilt: %s\n' "$PROGRAM" "$CATALOG_FILE"
+fi

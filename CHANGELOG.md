@@ -4,6 +4,20 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-26
+
+### Added
+
+- Optional age recipient encryption for completed local, remote, and emailed backup artifacts; disabled by default.
+- Hourly stale-backup SLA evaluation with transition-only warning, critical, and recovery notifications.
+- Generic HTTPS JSON webhooks with protected URLs, optional Bearer authentication, and optional HMAC-SHA256 body signatures.
+- Atomic machine-readable central backup catalog generated from validated metadata sidecars.
+- Encryption, webhook, catalog, and stale-transition regression tests.
+
+### Changed
+
+- Metadata, status, Graph email, retention, upload filename validation, installers, and monitoring now understand encrypted `.unifi.age` artifacts.
+
 ## [1.1.0] - 2026-09-25
 
 ### Added

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check UniFi backup freshness every hour
+
+[Timer]
+OnCalendar=*-*-* *:15:00
+Persistent=true
+RandomizedDelaySec=5m
+Unit=unifi-backup-monitor.service
+
+[Install]
+WantedBy=timers.target

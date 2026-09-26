@@ -5,6 +5,9 @@ Every completed backup has a root-owned mode-0600 JSON sidecar:
 ```text
 unifi_os_backup_2026-09-25_03-00-00.unifi
 unifi_os_backup_2026-09-25_03-00-00.unifi.json
+# Or, with age encryption:
+unifi_os_backup_2026-09-25_03-00-00.unifi.age
+unifi_os_backup_2026-09-25_03-00-00.unifi.age.json
 ```
 
 The schema records:
@@ -14,11 +17,15 @@ The schema records:
 - host and configured UniFi HTTPS origin;
 - managed filename, byte size, and SHA256;
 - backup type and tool version;
+- encryption type/status, original plaintext filename, size, and plaintext SHA256;
+- download-validation and checksum-algorithm status;
 - selected remote backend plus backup/metadata upload status;
 - whether Graph mail was enabled and its status.
 
 No username, password, cookie, CSRF value, SAS, S3 key, Graph credential/token, mailbox, ntfy topic/token, or authorization header is written.
 
-When Graph email is enabled, the message body includes the backup ID and remote-backup status, and the JSON sidecar is attached alongside the `.unifi` file. The sidecar attached to a successfully accepted message reports email success. When remote storage is enabled, the final sidecar is uploaded after the email step.
+When Graph email is enabled, the message body includes the backup ID, encryption state, and remote-backup status, and the JSON sidecar is attached alongside the `.unifi` or `.unifi.age` file. The sidecar attached to a successfully accepted message reports email success. When remote storage is enabled, the final sidecar is uploaded after the email step.
+
+The consolidated inventory in `/var/lib/unifi-backup/catalog.json` is documented in [CATALOG.md](CATALOG.md).
 
 Metadata improves inventory and integrity checks but does not prove authenticity by itself. Protect it with the backup, and store hashes or signed manifests in a separately controlled system when tamper evidence is required.

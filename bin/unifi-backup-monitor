@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+PROGRAM="unifi-backup-monitor"
+CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
+
+usage() { echo "Usage: unifi-backup-monitor [--config FILE]"; }
+while (($#)); do
+  case "$1" in
+    --config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; CONFIG_FILE=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "$PROGRAM: unknown option: $1" >&2; exit 64 ;;
+  esac
+done
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+common_file="$script_dir/../lib/unifi-backup-common.sh"
+[[ -r $common_file ]] || common_file="/usr/local/lib/unifi-backup/common.sh"
+[[ -r $common_file ]] || { echo "$PROGRAM: ERROR: common library not found" >&2; exit 69; }
+# shellcheck source=../lib/unifi-backup-common.sh
+# shellcheck disable=SC1091
+source "$common_file"
+
+die() { local message=$1 code=${2:-3}; ub_error stale_monitor_failed "$message" exit_code "$code"; exit "$code"; }
+check_secret_file() {
+  local file=$1 mode owner expected=$EUID dir dir_mode dir_owner
+  [[ $file == /* && -f $file && ! -L $file ]] || die "Invalid configuration file: $file" 3
+  mode=$(stat -c '%a' "$file") || die "Cannot inspect configuration mode" 3
+  owner=$(stat -c '%u' "$file") || die "Cannot inspect configuration owner" 3
+  (( EUID == 0 )) && expected=0
+  [[ $owner == "$expected" ]] || die "Configuration has the wrong owner" 3
+  (( (8#$mode & 8#077) == 0 )) || die "Configuration must have no group/other permissions" 3
+  dir=${file%/*}
+  dir_mode=$(stat -c '%a' "$dir") || die "Cannot inspect configuration directory" 3
+  dir_owner=$(stat -c '%u' "$dir") || die "Cannot inspect configuration directory owner" 3
+  [[ ! -L $dir && $dir_owner == "$expected" ]] || die "Invalid configuration directory" 3
+  (( (8#$dir_mode & 8#077) == 0 )) || die "Configuration directory must have no group/other permissions" 3
+}
+
+for command_name in python3 stat mktemp; do command -v "$command_name" >/dev/null 2>&1 || die "Required command not found: $command_name" 3; done
+check_secret_file "$CONFIG_FILE"
+# shellcheck disable=SC1090
+source "$CONFIG_FILE"
+: "${LOG_FORMAT:=text}" "${STATUS_FILE:=/var/lib/unifi-backup/status.json}"
+: "${STALE_WARNING_HOURS:=192}" "${STALE_CRITICAL_HOURS:=216}" "${NOTIFY_ON_STALE:=true}"
+: "${ENABLE_NTFY:=false}" "${NTFY_CONFIG_FILE:=/etc/unifi-backup/ntfy.env}"
+: "${ENABLE_WEBHOOK:=false}" "${WEBHOOK_CONFIG_FILE:=/etc/unifi-backup/webhook.env}"
+
+[[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 3
+ub_is_positive_int "$STALE_WARNING_HOURS" || die "STALE_WARNING_HOURS must be a positive integer" 3
+ub_is_positive_int "$STALE_CRITICAL_HOURS" || die "STALE_CRITICAL_HOURS must be a positive integer" 3
+(( STALE_CRITICAL_HOURS > STALE_WARNING_HOURS )) || die "STALE_CRITICAL_HOURS must exceed STALE_WARNING_HOURS" 3
+ub_is_bool "$NOTIFY_ON_STALE" || die "NOTIFY_ON_STALE must be true or false" 3
+ub_is_bool "$ENABLE_NTFY" || die "ENABLE_NTFY must be true or false" 3
+ub_is_bool "$ENABLE_WEBHOOK" || die "ENABLE_WEBHOOK must be true or false" 3
+[[ $STATUS_FILE == /* ]] || die "STATUS_FILE must be absolute" 3
+
+status_tool="/usr/local/sbin/unifi-backup-status"
+[[ -x $status_tool ]] || status_tool="$script_dir/unifi-backup-status"
+[[ -x $status_tool ]] || die "unifi-backup-status is not installed" 3
+notifier="/usr/local/sbin/unifi-backup-notify"
+[[ -x $notifier ]] || notifier="$script_dir/unifi-backup-notify"
+
+state_dir=${STATUS_FILE%/*}
+[[ -d $state_dir && ! -L $state_dir ]] || die "Monitoring state directory is missing or unsafe" 3
+monitor_state="$state_dir/monitor-state.json"
+metrics_file="$state_dir/unifi_backup.prom"
+tmp_metrics=$(mktemp "$state_dir/.metrics.XXXXXX")
+tmp_state=$(mktemp "$state_dir/.monitor-state.XXXXXX")
+tmp_status=$(mktemp "$state_dir/.status-evaluation.XXXXXX")
+cleanup() { local rc=$?; rm -f -- "$tmp_metrics" "$tmp_state" "$tmp_status"; exit "$rc"; }
+trap cleanup EXIT
+
+set +e
+status_json=$("$status_tool" --status-file "$STATUS_FILE" --format json \
+  --warning-age-hours "$STALE_WARNING_HOURS" --critical-age-hours "$STALE_CRITICAL_HOURS")
+status_rc=$?
+set -e
+(( status_rc <= 2 )) || die "Backup status is UNKNOWN; status file is missing or invalid" 3
+printf '%s\n' "$status_json" > "$tmp_status"
+
+"$status_tool" --status-file "$STATUS_FILE" --format prometheus \
+  --warning-age-hours "$STALE_WARNING_HOURS" --critical-age-hours "$STALE_CRITICAL_HOURS" > "$tmp_metrics"
+chmod 0644 "$tmp_metrics"
+mv -f -- "$tmp_metrics" "$metrics_file"
+
+readarray -d '' -t state_values < <(python3 - "$tmp_status" "$monitor_state" <<'PY'
+import json, pathlib, sys
+current = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+path = pathlib.Path(sys.argv[2])
+try:
+    previous = json.loads(path.read_text(encoding="utf-8")).get("stale_status", "UNKNOWN")
+except Exception:
+    previous = "UNKNOWN"
+monitoring = current["monitoring"]
+stale_status = str(monitoring.get("stale_status", "critical")).upper()
+age = monitoring.get("backup_age_seconds")
+if age is None:
+    stale_message = "No successful backup has been recorded"
+else:
+    stale_message = f"Last successful backup is {age} seconds old"
+values = [
+    previous,
+    stale_status,
+    stale_message,
+    "true" if monitoring.get("stale") else "false",
+]
+sys.stdout.buffer.write(b"\0".join(value.encode() for value in values) + b"\0")
+PY
+)
+previous_status=${state_values[0]}
+current_status=${state_values[1]}
+status_message=${state_values[2]}
+is_stale=${state_values[3]}
+
+python3 - "$tmp_state" "$tmp_status" <<'PY'
+import datetime, json, os, pathlib, sys
+data = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+record = {
+    "schema_version": 1,
+    "checked_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+    "status": data["monitoring"]["status"],
+    "status_code": data["monitoring"]["status_code"],
+    "stale": data["monitoring"]["stale"],
+    "stale_status": data["monitoring"]["stale_status"].upper(),
+    "message": data["monitoring"]["message"],
+}
+with open(sys.argv[1], "w", encoding="utf-8") as stream:
+    json.dump(record, stream, separators=(",", ":"), ensure_ascii=True)
+    stream.write("\n")
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
+chmod 0644 "$tmp_state"
+mv -f -- "$tmp_state" "$monitor_state"
+
+ub_info stale_check_complete "Backup freshness evaluated" freshness_status "$current_status" stale "$is_stale" status_code "$status_rc"
+
+if [[ $NOTIFY_ON_STALE == "true" && ( $ENABLE_NTFY == "true" || $ENABLE_WEBHOOK == "true" ) && $previous_status != "$current_status" ]]; then
+  event=""
+  case "$current_status" in
+    WARNING) event="stale_warning" ;;
+    CRITICAL) event="stale_critical" ;;
+    FRESH)
+      [[ $previous_status == "WARNING" || $previous_status == "CRITICAL" ]] && event="stale_recovery"
+      ;;
+  esac
+  if [[ -n $event ]]; then
+    [[ -x $notifier ]] || die "Notification helper is not installed" 3
+    if ! "$notifier" --config "$CONFIG_FILE" --ntfy-config "$NTFY_CONFIG_FILE" \
+        --webhook-config "$WEBHOOK_CONFIG_FILE" --status-file "$STATUS_FILE" \
+        --event "$event" --message "$status_message" --exit-code "$status_rc"; then
+      ub_warn stale_notification_failed "Freshness transition notification failed; monitoring result is unchanged" notification_event "$event"
+    fi
+  fi
+fi
+
+exit "$status_rc"

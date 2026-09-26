@@ -11,8 +11,8 @@ The commands use the established BSD `sysexits` range where practical. Monitorin
 | `69` | service unavailable | Missing dependency/helper, DNS/connect/TLS transport failure |
 | `70` | internal software error | Internal invariant or logging-field failure |
 | `73` | cannot create | Local directory/file/metadata/status creation failure |
-| `74` | I/O or validation error | Invalid/empty/small/error-like backup, endpoint failure, or retention I/O error |
-| `75` | temporary/remote failure | Active lock, required Azure/S3 upload failure, Graph send failure, or ntfy rejection |
+| `74` | I/O or validation error | Invalid/empty/small/error-like backup, endpoint/encryption failure, or retention I/O error |
+| `75` | temporary/remote failure | Active lock, required Azure/S3 upload failure, Graph send failure, or ntfy/webhook rejection |
 | `77` | permission/authentication | UniFi or Graph authentication/authorization failure |
 | `78` | configuration | Missing, insecure, unsupported, or inconsistent configuration |
 | `129` | signal | SIGHUP |
@@ -33,3 +33,5 @@ HTTP and curl error categories are included in the sanitized log message and JSO
 | `3` | UNKNOWN |
 
 `--format snmp` prints this number but exits zero so Net-SNMP can expose the value as a numeric custom OID. `--format prometheus` also exits zero after successful rendering.
+
+`unifi-backup-monitor` returns the same `0`/`1`/`2`/`3` monitoring codes. Its systemd unit declares 1 and 2 as successful service outcomes so WARNING/CRITICAL backup state does not masquerade as a crashed checker; UNKNOWN remains a failed unit run.

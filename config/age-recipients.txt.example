@@ -1,0 +1,6 @@
+# Public age recipients only, one per line. This file must never contain an
+# AGE-SECRET-KEY or another private identity. Replace this comment before
+# enabling ENCRYPTION_TYPE="age".
+#
+# Example format (deliberately not a usable recipient):
+# age1replace_with_your_public_recipient

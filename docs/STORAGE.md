@@ -96,4 +96,6 @@ Configure remote lifecycle independently from local retention. Consider immutabl
 
 With `REMOTE_UPLOAD_REQUIRED="true"`, an upload failure exits with code 75 after retaining the local backup. With `false`, the run continues, but metadata, JSON logs, the status file, and monitoring metrics report the remote failure.
 
+When client-side age encryption is enabled, the uploader receives the `.unifi.age` artifact rather than plaintext. Provider-side encryption can still be used as a separate control. See [ENCRYPTION.md](ENCRYPTION.md).
+
 SAS tokens, S3 secret keys, session tokens, authorization signatures, and signed URLs are stored only in root-owned configuration or mode-0600 temporary files. They are not placed on curl's command line or in logs.

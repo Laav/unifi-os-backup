@@ -18,6 +18,7 @@ sed -e 's#https://unifi.example.invalid:11443#https://127.0.0.1:11443#' \
     -e 's#UNIFI_PASSWORD="CHANGE_ME"#UNIFI_PASSWORD="test-only"#' \
     -e "s#BACKUP_DIR=\"/var/backups/unifi\"#BACKUP_DIR=\"$tmp/backups\"#" \
     -e "s#STATUS_FILE=\"/var/lib/unifi-backup/status.json\"#STATUS_FILE=\"$tmp/backups/status.json\"#" \
+    -e "s#CATALOG_FILE=\"/var/lib/unifi-backup/catalog.json\"#CATALOG_FILE=\"$tmp/backups/catalog.json\"#" \
     -e 's#BACKUP_DOWNLOAD_RETRIES="1"#BACKUP_DOWNLOAD_RETRIES="0"#' \
     -e 's#LOG_FORMAT="text"#LOG_FORMAT="json"#' \
     -e "s#LOCK_FILE=\"/run/unifi-backup/unifi-backup.lock\"#LOCK_FILE=\"$tmp/backups/.unifi-backup.lock\"#" \
@@ -46,7 +47,7 @@ metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 assert metadata["schema_version"] == 1
 assert metadata["backup"]["sha256"] == hashlib.sha256(backup).hexdigest()
 assert metadata["backup"]["size_bytes"] == len(backup)
-assert metadata["tool"]["version"] == "1.1.0"
+assert metadata["tool"]["version"] == "1.2.0"
 assert metadata["remote_storage"]["type"] == "none"
 assert metadata["email"] == {"enabled": False, "status": "disabled"}
 assert "test-only" not in metadata_path.read_text(encoding="utf-8")

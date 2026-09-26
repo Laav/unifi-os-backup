@@ -72,7 +72,7 @@ The software logs sanitized Graph error code/message only, never the token or se
 
 A successful login does not guarantee that the subsequent unsupported backup endpoint will immediately return a backup. A real incident showed an HTML/JSON-like response on one run and a valid `.unifi` response a few minutes later. When `BACKUP_DOWNLOAD_RETRIES` is greater than zero, the current version waits `BACKUP_RETRY_DELAY`, performs a fresh login, and retries only a bounded number of times.
 
-The response is never published as a backup, retained, attached, or uploaded. Because Graph mail happens only after successful backup validation, no success email is sent for such a failed run. The status file, Prometheus metrics, JSON event, systemd exit code, and optional ntfy failure notification record the failure instead.
+The response is never published as a backup, retained, attached, or uploaded. Because Graph mail happens only after successful backup validation, no success email is sent for such a failed run. The status file, Prometheus metrics, JSON event, systemd exit code, and optional ntfy/webhook failure notification record the failure instead.
 
 If all attempts fail, do not increase retries indefinitely. Check UniFi health and recent upgrades, run `sudo unifi-backup-check --live`, wait a few minutes, and perform one manual service run. Repeated failures may indicate a changed controlplane contract.
 
@@ -82,3 +82,13 @@ If all attempts fail, do not increase retries indefinitely. Check UniFi health a
 - HTTP 409/412 from object storage: an object with the same managed name already exists; the uploader refuses overwrite.
 - ntfy HTTP 401/403: verify the access token and topic ACL without logging or placing the token on the command line.
 - No ntfy notification after an early configuration error: notification configuration may not have been safely loaded yet; systemd/journald remains authoritative.
+- Webhook HTTP 4xx/5xx: validate the destination schema/authentication and inspect the receiving system; the URL, Bearer token, and HMAC secret are intentionally not logged.
+- A stale alert repeats only after the monitoring state changes. Inspect `status.json`, `monitor-state.json`, `unifi_backup.prom`, and `journalctl -u unifi-backup-monitor.service`.
+
+## Encryption and catalog
+
+- `age: command not found`: install the reviewed Ubuntu `age` package before enabling encryption.
+- `AGE_RECIPIENTS_FILE contains no supported public recipient`: replace the placeholder with a native age recipient or supported SSH public recipient.
+- Private identity rejected: this is intentional; keep the identity on a separate recovery system.
+- Encryption failure: no encrypted artifact is published and the plaintext temporary file is removed by cleanup; inspect sanitized age output and recipient compatibility.
+- Catalog missing an entry: verify that both the managed artifact and its exact `.json` sidecar exist, are regular non-symlink files, and contain valid metadata.

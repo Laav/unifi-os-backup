@@ -30,6 +30,12 @@ sudo chmod 0600 /etc/unifi-backup/*.env
 | `UNIFI_CA_CERT` | empty | Absolute PEM CA-chain file for a private CA |
 | `LOG_FORMAT` | `text` | `text` or compact newline-delimited `json` |
 | `STATUS_FILE` | `/var/lib/unifi-backup/status.json` | Atomically maintained non-secret monitoring state |
+| `ENCRYPTION_TYPE` | `none` | `none` or optional `age` encryption at rest |
+| `AGE_RECIPIENTS_FILE` | `/etc/unifi-backup/age-recipients.txt` | Root-owned file containing public recipients only |
+| `CATALOG_FILE` | `/var/lib/unifi-backup/catalog.json` | Atomic inventory of managed backups and metadata |
+| `STALE_WARNING_HOURS` | `192` | Freshness warning threshold used by the hourly monitor |
+| `STALE_CRITICAL_HOURS` | `216` | Freshness critical threshold; must exceed warning |
+| `NOTIFY_ON_STALE` | `true` | Notify once on stale status transitions and recovery |
 | `ENABLE_EMAIL` | `false` | Exactly `true` or `false` |
 | `GRAPH_CONFIG_FILE` | `/etc/unifi-backup/graph.env` | Graph secret file |
 | `REMOTE_STORAGE_TYPE` | `none` | `none`, `azure_blob`, or `s3` |
@@ -37,12 +43,14 @@ sudo chmod 0600 /etc/unifi-backup/*.env
 | `REMOTE_UPLOAD_REQUIRED` | `true` | Fail the run when enabled remote storage fails |
 | `ENABLE_NTFY` | `false` | Enable ntfy status notifications |
 | `NTFY_CONFIG_FILE` | `/etc/unifi-backup/ntfy.env` | ntfy secret file |
+| `ENABLE_WEBHOOK` | `false` | Enable the generic HTTPS JSON webhook |
+| `WEBHOOK_CONFIG_FILE` | `/etc/unifi-backup/webhook.env` | Webhook URL/authentication secret file |
 | `NOTIFY_ON_SUCCESS` | `false` | Send routine success notifications |
 | `NOTIFY_ON_FAILURE` | `true` | Notify when a tracked backup run fails |
 | `NOTIFY_ON_RECOVERY` | `true` | Notify once after a failure is followed by success |
 | `LOCK_FILE` | `/run/unifi-backup/unifi-backup.lock` | Lock in the private runtime directory |
 
-See [RETENTION.md](RETENTION.md), [STORAGE.md](STORAGE.md), [MONITORING.md](MONITORING.md), [METADATA.md](METADATA.md), and [NOTIFICATIONS.md](NOTIFICATIONS.md) for detailed semantics.
+See [ENCRYPTION.md](ENCRYPTION.md), [RETENTION.md](RETENTION.md), [STORAGE.md](STORAGE.md), [MONITORING.md](MONITORING.md), [METADATA.md](METADATA.md), [CATALOG.md](CATALOG.md), [NOTIFICATIONS.md](NOTIFICATIONS.md), and [WEBHOOKS.md](WEBHOOKS.md) for detailed semantics.
 
 For symlink safety, `LOCK_FILE` must be directly below `/run/unifi-backup` or directly inside `BACKUP_DIR`, and its basename must end in `.lock`. The runtime directory is forced to mode 0700 before the file is opened. The systemd service creates `/run/unifi-backup` with `RuntimeDirectory=` and preserves it across oneshot exits so service and manual runs always contend on the same lock; `/run` is cleared on reboot. Manual runs create it when needed.
 
@@ -69,6 +77,8 @@ ReadWritePaths=/srv/secure-backups/unifi /run/unifi-backup /var/lib/unifi-backup
 ```
 
 Then create the directory as root with mode 0700 and run `sudo systemctl daemon-reload`. Do not make a home directory the destination; `ProtectHome=true` intentionally blocks it.
+
+If `STATUS_FILE` is also moved outside `/var/lib/unifi-backup`, add its parent to `ReadWritePaths` in a separate `unifi-backup-monitor.service` override as well. Keep `CATALOG_FILE` directly under `/var/lib/unifi-backup` unless a deliberate service override permits another validated path.
 
 ## Schedule
 

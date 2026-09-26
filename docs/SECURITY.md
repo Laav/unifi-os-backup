@@ -2,7 +2,7 @@
 
 ## Trust boundaries
 
-The root service reads local secrets, talks to a configured UniFi HTTPS origin and optionally Microsoft identity/Graph, Azure Blob or S3-compatible storage, and ntfy, then writes sensitive backups. Root, the configuration owner, the configured services, and the host CA trust store are trusted boundaries.
+The root service reads local secrets, talks to a configured UniFi HTTPS origin and optionally Microsoft identity/Graph, Azure Blob or S3-compatible storage, ntfy, and a generic webhook, then writes sensitive backups. Root, the configuration owner, the configured services, and the host CA trust store are trusted boundaries.
 
 ## Controls
 
@@ -11,6 +11,8 @@ The root service reads local secrets, talks to a configured UniFi HTTPS origin a
 - Password JSON and OAuth form encoding are done by Python; secret values are streamed on stdin.
 - Graph authorization is read by curl from a temporary header file, not exposed in `ps` arguments.
 - Azure SAS, S3 signing material, signed URLs, and ntfy bearer tokens are likewise kept in root-only configuration and mode-0600 temporary files rather than command-line values.
+- Webhook URLs/tokens/HMAC secrets are protected in the same way, and webhook payloads can be authenticated with HMAC-SHA256.
+- Optional age encryption uses public recipients only on the backup host; common private-identity markers are rejected.
 - Normal TLS validation is mandatory. A private CA is explicit; insecure TLS is unsupported.
 - HTTP status, TOKEN cookie, minimum size, Content-Type, and leading HTML/JSON content are checked before publish.
 - The destination temporary file shares the final filesystem so `mv` is atomic.
@@ -28,12 +30,15 @@ The root service reads local secrets, talks to a configured UniFi HTTPS origin a
 - Client secrets are supported for initial compatibility; certificate or workload-identity authentication would reduce shared-secret risk but is not implemented.
 - The status/Prometheus files are intentionally world-readable for local monitoring agents and therefore contain no credentials. They do contain filenames, hashes, sizes, and timestamps.
 - Remote object storage exposes sensitive controller backups to another security boundary. Provider-side encryption does not replace least privilege, immutability, or client-side encryption requirements in higher-risk environments.
+- With age enabled, plaintext still exists temporarily while the download is validated and encrypted. File deletion cannot guarantee physical erasure on SSD, snapshot, journaled, or copy-on-write storage.
+- Losing all age recovery identities makes encrypted backups permanently unrecoverable.
 
 ## Operational recommendations
 
 - Use a long, unique UniFi password and rotate it.
 - Use least privilege and test whether a non-Super-Admin role can download system backups on every upgrade.
 - Encrypt the backup filesystem or host volume at rest.
+- For age encryption, keep independently protected recovery identities off-host and test decryption plus a non-production restore.
 - Replicate to a separate failure domain with a prefix-scoped, write-only identity and provider lifecycle/immutability controls.
 - Alert on failed systemd units and on missing expected weekly files.
 - Treat emailed `.unifi` attachments as sensitive and apply mailbox retention/DLP controls.

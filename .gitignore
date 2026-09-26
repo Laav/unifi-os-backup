@@ -9,12 +9,19 @@
 *.pfx
 credentials*
 secrets*
+age-recipients.txt
+age-identity*
+*-identity.txt
 
 # Backups, hashes and transient data
 *.unifi
 *.unifi.json
+*.unifi.age
+*.unifi.age.json
 *.sha256
 status.json
+catalog.json
+monitor-state.json
 *.prom
 *.tmp
 *.part

@@ -18,7 +18,7 @@ Semantics:
 
 For example, `35/12/2` keeps at least the newest two backups, deletes backups older than 35 days, and never retains more than the newest 12.
 
-Only exact names matching `unifi_os_backup_YYYY-MM-DD_HH-MM-SS.unifi` are candidates. Deleting a backup also deletes only its exact `.unifi.json` metadata sidecar. Other files are ignored. Empty paths, `/`, symlink destinations, invalid numbers, and unexpected sidecar object types cause a safe failure.
+Only exact names matching `unifi_os_backup_YYYY-MM-DD_HH-MM-SS.unifi` or `unifi_os_backup_YYYY-MM-DD_HH-MM-SS.unifi.age` are candidates. Deleting a backup also deletes only its exact `.json` metadata sidecar. Other files are ignored. Empty paths, `/`, symlink destinations, invalid numbers, and unexpected sidecar object types cause a safe failure. The central catalog is rebuilt after normal and retention-only runs.
 
 Preview the directory yourself, then run retention without downloading a backup:
 

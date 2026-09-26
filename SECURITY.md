@@ -8,7 +8,7 @@ Security fixes are provided for the latest tagged release. Operators should test
 
 Do not open a public issue containing credentials, tokens, backup data, internal URLs, tenant identifiers, or exploit details. Use the repository owner's private vulnerability-reporting channel (GitHub Security Advisories is recommended). Include the affected version, impact, reproduction steps using fictitious data, and any proposed mitigation.
 
-Rotate affected UniFi credentials, Graph client secrets, and tokens before sharing sanitized diagnostics. Never attach a real `.unifi` file.
+Rotate affected UniFi credentials, Graph client secrets, webhook/ntfy/storage tokens, and HMAC secrets before sharing sanitized diagnostics. Never attach a real `.unifi`, `.unifi.age`, age identity, or private recipient configuration file.
 
 ## Scope
 

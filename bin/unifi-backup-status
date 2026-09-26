@@ -70,6 +70,13 @@ except Exception:
 last_success = data.get("last_success") or {}
 success_epoch = int(last_success.get("completed_timestamp", 0) or 0)
 age = max(0, int(time.time()) - success_epoch) if success_epoch else None
+stale = age is None or age >= warning_seconds
+if age is None or age >= critical_seconds:
+    stale_status = "critical"
+elif age >= warning_seconds:
+    stale_status = "warning"
+else:
+    stale_status = "fresh"
 
 if run.get("status") == "failure":
     code, label = 2, "CRITICAL"
@@ -90,7 +97,16 @@ if fmt == "snmp":
     raise SystemExit(0)
 if fmt == "json":
     result = dict(data)
-    result["monitoring"] = {"status": label, "status_code": code, "message": message, "backup_age_seconds": age}
+    result["monitoring"] = {
+        "status": label,
+        "status_code": code,
+        "message": message,
+        "backup_age_seconds": age,
+        "stale": stale,
+        "stale_status": stale_status,
+        "warning_age_seconds": warning_seconds,
+        "critical_age_seconds": critical_seconds,
+    }
     print(json.dumps(result, separators=(",", ":"), ensure_ascii=True))
 elif fmt == "prometheus":
     success = 1 if run.get("status") == "success" else 0
@@ -108,6 +124,9 @@ elif fmt == "prometheus":
     print(f"unifi_backup_last_success_timestamp_seconds {success_epoch}")
     print("# TYPE unifi_backup_age_seconds gauge")
     print(f"unifi_backup_age_seconds {age if age is not None else -1}")
+    print("# HELP unifi_backup_stale One when backup age exceeds the warning SLA or no successful backup exists.")
+    print("# TYPE unifi_backup_stale gauge")
+    print(f"unifi_backup_stale {1 if stale else 0}")
     print("# TYPE unifi_backup_size_bytes gauge")
     print(f"unifi_backup_size_bytes {int(last_success.get('size_bytes', 0) or 0)}")
     print("# TYPE unifi_backup_duration_seconds gauge")

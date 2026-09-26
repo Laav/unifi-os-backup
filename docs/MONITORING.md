@@ -11,6 +11,25 @@ Each real backup run atomically updates:
 
 These files contain operational state, filenames, sizes, timestamps, hashes, and integration statuses, but no credentials or tokens. They are mode 0644 in a mode-0755 state directory so local monitoring agents can read them. Backup metadata remains mode 0600 under the backup directory.
 
+## Automatic stale-backup detection
+
+`unifi-backup-monitor.timer` runs hourly, evaluates the configured freshness SLA, refreshes the Prometheus textfile, and records `/var/lib/unifi-backup/monitor-state.json`. Start it after validating the installation:
+
+```bash
+sudo systemctl enable --now unifi-backup-monitor.timer
+systemctl list-timers unifi-backup-monitor.timer
+```
+
+Configure the SLA in `unifi-backup.env`:
+
+```bash
+STALE_WARNING_HOURS="192"
+STALE_CRITICAL_HOURS="216"
+NOTIFY_ON_STALE="true"
+```
+
+With ntfy or webhooks enabled, notifications are emitted only when the state changes to WARNING/CRITICAL or returns to OK. Repeated hourly checks in the same state do not create duplicate alerts. The timer service treats exit 1/2 as expected monitoring outcomes; exit 3 (UNKNOWN) remains a systemd failure.
+
 ## Status command
 
 ```bash
@@ -61,7 +80,7 @@ Test the exact OID from the Auvik collector network before relying on the alert.
 
 ## Prometheus/node_exporter
 
-Point node_exporter's textfile collector at `/var/lib/unifi-backup`. It reads `unifi_backup.prom`, which is atomically replaced at the end of every run. The file exposes run success, exit code, timestamps, duration, size, remote upload, and email state.
+Point node_exporter's textfile collector at `/var/lib/unifi-backup`. It reads `unifi_backup.prom`, which is atomically replaced. The file exposes run success, exit code, timestamps, current age, `unifi_backup_stale`, duration, size, remote upload, and email state. The hourly monitor refreshes age-dependent values between backup runs.
 
 Calculate current age in PromQL so it continues increasing between runs:
 

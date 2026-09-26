@@ -10,19 +10,22 @@ config="$tmp/unifi-backup.env"
 sed -e 's#https://unifi.example.invalid:11443#https://127.0.0.1:11443#' \
     -e 's#UNIFI_PASSWORD="CHANGE_ME"#UNIFI_PASSWORD="test-only"#' \
     -e "s#BACKUP_DIR=\"/var/backups/unifi\"#BACKUP_DIR=\"$backup_dir\"#" \
+    -e "s#CATALOG_FILE=\"/var/lib/unifi-backup/catalog.json\"#CATALOG_FILE=\"$backup_dir/catalog.json\"#" \
     -e 's#RETENTION_DAYS="35"#RETENTION_DAYS="1"#' \
     "$root/config/unifi-backup.env.example" > "$config"
 chmod 0600 "$config"
 
 managed="$backup_dir/unifi_os_backup_2020-01-01_00-00-00.unifi"
+encrypted="$backup_dir/unifi_os_backup_2020-01-02_00-00-00.unifi.age"
 newest="$backup_dir/unifi_os_backup_2026-01-01_00-00-00.unifi"
 unmanaged="$backup_dir/do-not-delete.unifi"
 near_match="$backup_dir/unifi_os_backup_NOT-A-DATE.unifi"
-: > "$managed"; : > "$managed.json"; : > "$newest"; : > "$unmanaged"; : > "$near_match"
-touch -d '10 days ago' "$managed" "$unmanaged" "$near_match"
+: > "$managed"; : > "$managed.json"; : > "$encrypted"; : > "$encrypted.json"; : > "$newest"; : > "$unmanaged"; : > "$near_match"
+touch -d '10 days ago' "$managed" "$encrypted" "$unmanaged" "$near_match"
 "$root/bin/unifi-backup" --config "$config" --retention-only
 [[ ! -e $managed ]] || { echo "FAIL: expired managed file remains" >&2; exit 1; }
 [[ ! -e $managed.json ]] || { echo "FAIL: metadata sidecar for expired backup remains" >&2; exit 1; }
+[[ ! -e $encrypted && ! -e $encrypted.json ]] || { echo "FAIL: expired encrypted backup or sidecar remains" >&2; exit 1; }
 [[ -e $newest ]] || { echo "FAIL: retention deleted the minimum preserved backup" >&2; exit 1; }
 [[ -e $unmanaged && -e $near_match ]] || { echo "FAIL: retention deleted an unmanaged file" >&2; exit 1; }
 
@@ -32,6 +35,7 @@ count_config="$tmp/count.env"
 sed -e 's#https://unifi.example.invalid:11443#https://127.0.0.1:11443#' \
     -e 's#UNIFI_PASSWORD="CHANGE_ME"#UNIFI_PASSWORD="test-only"#' \
     -e "s#BACKUP_DIR=\"/var/backups/unifi\"#BACKUP_DIR=\"$count_dir\"#" \
+    -e "s#CATALOG_FILE=\"/var/lib/unifi-backup/catalog.json\"#CATALOG_FILE=\"$count_dir/catalog.json\"#" \
     -e 's#RETENTION_DAYS="35"#RETENTION_DAYS="0"#' \
     -e 's#RETENTION_COUNT="0"#RETENTION_COUNT="3"#' \
     "$root/config/unifi-backup.env.example" > "$count_config"

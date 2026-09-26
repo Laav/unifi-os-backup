@@ -6,6 +6,7 @@
 - Bash 4+, curl, Python 3, systemd, `sha256sum`, `find`, `stat`, `mktemp`, and `flock`.
 - Root access for installation and production execution.
 - Network reachability to the HTTPS UniFi OS controlplane.
+- `age` only when optional encryption at rest is enabled.
 
 On Ubuntu:
 
@@ -49,14 +50,16 @@ The standalone installer requires Git, clones into `/opt/unifi-os-backup`, then 
 | `/usr/local/sbin/unifi-mail-backup` | 0755 | Optional Graph mailer |
 | `/usr/local/sbin/unifi-backup-check` | 0755 | Configuration/live check |
 | `/usr/local/sbin/unifi-backup-upload` | 0755 | Optional Azure Blob/S3 uploader |
-| `/usr/local/sbin/unifi-backup-notify` | 0755 | Optional ntfy publisher |
+| `/usr/local/sbin/unifi-backup-notify` | 0755 | Optional ntfy/generic-webhook publisher |
 | `/usr/local/sbin/unifi-backup-status` | 0755 | Monitoring output for RMM/SNMP/Prometheus |
+| `/usr/local/sbin/unifi-backup-monitor` | 0755 | Hourly freshness/SLA transition evaluator |
+| `/usr/local/sbin/unifi-backup-catalog` | 0755 | Atomic machine-readable inventory builder |
 | `/usr/local/lib/unifi-backup/common.sh` | 0644 | Shared structured logging helpers |
 | `/etc/unifi-backup/` | 0700 | Configuration directory |
 | `/etc/unifi-backup/*.env` | 0600 | Root-owned secrets |
 | `/var/backups/unifi/` | 0700 | Backups |
 | `/var/lib/unifi-backup/` | 0755 | Non-secret status and Prometheus metrics |
-| `/etc/systemd/system/unifi-backup.*` | 0644 | Unit and timer |
+| `/etc/systemd/system/unifi-backup*` | 0644 | Backup and freshness-monitor units/timers |
 
 The examples are copied only when the destination does not exist. Re-running `install.sh` preserves configuration and backups.
 
@@ -67,9 +70,11 @@ sudoedit /etc/unifi-backup/unifi-backup.env
 sudo chown -R root:root /etc/unifi-backup
 sudo chmod 0700 /etc/unifi-backup
 sudo chmod 0600 /etc/unifi-backup/*.env
+sudo chmod 0600 /etc/unifi-backup/age-recipients.txt
 sudo unifi-backup-check --live
 sudo systemctl start unifi-backup.service
 sudo systemctl start unifi-backup.timer
+sudo systemctl start unifi-backup-monitor.timer
 ```
 
 Check `systemctl status` and `journalctl -u unifi-backup.service` after the first real run.

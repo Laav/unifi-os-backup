@@ -8,7 +8,7 @@ GRAPH_CONFIG_FILE="/etc/unifi-backup/graph.env"
 GRAPH_CONFIG_OVERRIDE=""
 METADATA_FILE=""
 
-usage() { echo "Usage: unifi-mail-backup [--config FILE] [--graph-config FILE] [--metadata FILE] BACKUP.unifi"; }
+usage() { echo "Usage: unifi-mail-backup [--config FILE] [--graph-config FILE] [--metadata FILE] BACKUP.unifi[.age]"; }
 while (($#)); do
   case "$1" in
     --config) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; CONFIG_FILE=$2; shift 2 ;;
@@ -83,7 +83,7 @@ BACKUP_DIR=${BACKUP_DIR%/}
 [[ -d $BACKUP_DIR && ! -L $BACKUP_DIR ]] || die "BACKUP_DIR must be a real directory, not a symbolic link" 66
 [[ $BACKUP_FILE == /* && ${BACKUP_FILE%/*} == "$BACKUP_DIR" ]] || die "Backup file must be directly inside BACKUP_DIR" 66
 [[ -f $BACKUP_FILE && -r $BACKUP_FILE && -s $BACKUP_FILE && ! -L $BACKUP_FILE ]] || die "Backup file is missing, empty, unreadable, or a symbolic link: $BACKUP_FILE" 66
-[[ ${BACKUP_FILE##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi$ ]] || die "Backup filename does not match the managed backup pattern" 65
+[[ ${BACKUP_FILE##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi(\.age)?$ ]] || die "Backup filename does not match the managed backup pattern" 65
 [[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 78
 backup_mode=$(stat -c '%a' "$BACKUP_FILE")
 backup_owner=$(stat -c '%u' "$BACKUP_FILE")
@@ -178,6 +178,7 @@ if metadata_path:
     metadata=json.loads(pathlib.Path(metadata_path).read_text(encoding="utf-8"))
 backup_meta=metadata.get("backup", {})
 remote_meta=metadata.get("remote_storage", {})
+encryption_meta=metadata.get("encryption", {})
 def esc(v): return html.escape(str(v),quote=True)
 def format_size(value):
     if value < 1024:
@@ -193,6 +194,9 @@ if backup_meta.get("id"):
     metadata_rows += f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Backup ID</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;word-break:break-all;\">{esc(backup_meta['id'])}</td></tr>"
 if remote_meta:
     metadata_rows += f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Remote storage</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(remote_meta.get('type', 'none'))}: {esc(remote_meta.get('backup_status', 'unknown'))}</td></tr>"
+if encryption_meta:
+    encryption_label = encryption_meta.get("type", "none") if encryption_meta.get("enabled") else "disabled"
+    metadata_rows += f"<tr><td width=\"140\" valign=\"top\" style=\"width:140px;padding:10px 8px 10px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;\">Encryption at rest</td><td valign=\"top\" style=\"padding:10px 0;border-bottom:1px solid #e5e7eb;color:#1f2937;\">{esc(encryption_label)}</td></tr>"
 
 # Table-based layout and inline styles keep the message predictable in Outlook
 # desktop, Outlook on the web, and other clients with restricted CSS support.
@@ -222,7 +226,7 @@ body=("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\
       "</table>"
       "<div style=\"margin-bottom:12px;font-size:18px;line-height:24px;font-weight:700;color:#1f2937;\">Integrity check</div>"
       f"<div style=\"margin-bottom:28px;padding:14px;background-color:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:19px;color:#374151;word-break:break-all;\"><strong>SHA256</strong><br>{esc(sha)}</div>"
-      "<div style=\"font-size:14px;line-height:24px;color:#4b5563;\">The complete UniFi OS System Backup is attached as a <strong>.unifi file</strong>. Store the attachment in accordance with your backup and data-protection policy.</div>"
+      f"<div style=\"font-size:14px;line-height:24px;color:#4b5563;\">The complete UniFi OS System Backup is attached as a <strong>{esc(p.suffixes[-2] + p.suffixes[-1] if p.name.endswith('.unifi.age') else '.unifi')} file</strong>. Store the attachment and, when encrypted, its separate recovery identity in accordance with your backup and data-protection policy.</div>"
       "</td></tr>"
       f"<tr><td style=\"padding:20px 32px;background-color:#f9fafb;border-top:1px solid #e5e7eb;border-radius:0 0 12px 12px;font-size:12px;line-height:19px;color:#6b7280;\">This message was generated automatically by the UniFi backup service on {esc(host)}. No reply is required.</td></tr>"
       "</table></td></tr></table></body></html>")

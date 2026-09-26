@@ -75,7 +75,7 @@ ub_is_positive_int "$STORAGE_MAX_TIME" || die "STORAGE_MAX_TIME must be a positi
 BACKUP_DIR=${BACKUP_DIR%/}
 [[ $UPLOAD_FILE == /* && ${UPLOAD_FILE%/*} == "$BACKUP_DIR" ]] || die "Upload file must be directly inside BACKUP_DIR" 66
 [[ -f $UPLOAD_FILE && -r $UPLOAD_FILE && -s $UPLOAD_FILE && ! -L $UPLOAD_FILE ]] || die "Upload file is missing, empty, unreadable, or a symbolic link" 66
-[[ ${UPLOAD_FILE##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi(\.json)?$ ]] || die "Upload filename does not match a managed backup or metadata filename" 65
+[[ ${UPLOAD_FILE##*/} =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi(\.age)?(\.json)?$ ]] || die "Upload filename does not match a managed backup or metadata filename" 65
 
 tmp_response=$(mktemp "${TMPDIR:-/tmp}/unifi-storage-response.XXXXXX")
 tmp_headers=$(mktemp "${TMPDIR:-/tmp}/unifi-storage-headers.XXXXXX")

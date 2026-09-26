@@ -1,6 +1,6 @@
 # UniFi OS System Backup for Linux
 
-Production-oriented Bash tooling that signs in to a local UniFi OS controlplane, downloads and validates a full System Config Backup, stores it atomically, calculates SHA256, writes metadata, applies defensive retention, exports monitoring state, and can replicate to Azure Blob or S3-compatible storage. Microsoft Graph mail and ntfy notifications are optional.
+Production-oriented Bash tooling that signs in to a local UniFi OS controlplane, downloads and validates a full System Config Backup, stores it atomically, calculates SHA256, writes metadata and a central catalog, applies defensive retention, exports freshness monitoring, and can replicate to Azure Blob or S3-compatible storage. Optional integrations include age encryption at rest, Microsoft Graph mail, ntfy, and signed generic HTTPS webhooks.
 
 > [!IMPORTANT]
 > `POST /api/auth/login` and `GET /api/backup/download` are observed UniFi OS **controlplane endpoints**, not a documented stable public Ubiquiti API. UniFi upgrades can change or remove them. This project fails closed when authentication, status, type, size, or content differs from the expected behavior. Read [Endpoint compatibility](docs/TROUBLESHOOTING.md#endpoint-compatibility) before production use.
@@ -13,9 +13,10 @@ Production-oriented Bash tooling that signs in to a local UniFi OS controlplane,
 - Downloads land in a mode-0600 temporary file in the destination filesystem and become visible only after validation and an atomic `mv`.
 - Retention combines age, maximum count, and a minimum safety floor, and only considers exact managed filenames.
 - Each backup has a mode-0600 JSON metadata sidecar; Graph mail includes the metadata in its body and as an attachment.
+- Optional age recipient encryption publishes `.unifi.age` while keeping the private recovery identity off the backup host.
 - Azure Blob and S3-compatible uploads are optional, never delete the local copy, and never receive delete permission from this tool.
-- Machine-readable JSON logs, a status command, Prometheus textfile metrics, and an SNMP/Auvik pattern are included.
-- ntfy supports failure, recovery, and optional success notifications without file attachments or icon-producing tags.
+- Machine-readable JSON logs, stale-backup SLA checks, a central catalog, Prometheus textfile metrics, and an SNMP/Auvik pattern are included.
+- ntfy and generic HTTPS webhooks support failure, recovery, stale, and optional success notifications.
 - `flock` prevents concurrent runs.
 - The systemd service is hardened while retaining the filesystem and network access the job needs.
 - Configuration and backup data live outside Git under `/etc/unifi-backup` and `/var/backups/unifi`.
@@ -38,11 +39,12 @@ sudoedit /etc/unifi-backup/unifi-backup.env
 sudo unifi-backup-check --live
 sudo systemctl start unifi-backup.service
 sudo systemctl start unifi-backup.timer
+sudo systemctl start unifi-backup-monitor.timer
 ```
 
 The installer enables the timer but deliberately does not start it until configuration has been reviewed and a live login check succeeds. The default schedule is Sunday at 03:00 local time, with `Persistent=true`.
 
-See [INSTALL.md](docs/INSTALL.md) for bootstrap installation, [UNIFI-ACCOUNT.md](docs/UNIFI-ACCOUNT.md) for the service identity, and [CONFIGURATION.md](docs/CONFIGURATION.md) for every setting. Optional integrations are documented in [STORAGE.md](docs/STORAGE.md), [MICROSOFT-GRAPH.md](docs/MICROSOFT-GRAPH.md), [NOTIFICATIONS.md](docs/NOTIFICATIONS.md), and [MONITORING.md](docs/MONITORING.md).
+See [INSTALL.md](docs/INSTALL.md) for bootstrap installation, [UNIFI-ACCOUNT.md](docs/UNIFI-ACCOUNT.md) for the service identity, and [CONFIGURATION.md](docs/CONFIGURATION.md) for every setting. Optional integrations are documented in [ENCRYPTION.md](docs/ENCRYPTION.md), [STORAGE.md](docs/STORAGE.md), [MICROSOFT-GRAPH.md](docs/MICROSOFT-GRAPH.md), [NOTIFICATIONS.md](docs/NOTIFICATIONS.md), [WEBHOOKS.md](docs/WEBHOOKS.md), and [MONITORING.md](docs/MONITORING.md). See [CATALOG.md](docs/CATALOG.md) for the inventory schema.
 
 Repository maintainers should complete [PUBLISHING.md](docs/PUBLISHING.md), including the privacy review and executable Git-mode checks, before publishing a release.
 
@@ -59,7 +61,8 @@ sudo systemctl start unifi-backup.service
 sudo journalctl -u unifi-backup.service --since today
 systemctl list-timers unifi-backup.timer
 sudo unifi-backup-status
-sudo sha256sum /var/backups/unifi/unifi_os_backup_*.unifi
+sudo cat /var/lib/unifi-backup/catalog.json
+sudo sha256sum /var/backups/unifi/unifi_os_backup_*.unifi*
 ```
 
 Success is logged with the file path, byte size, SHA256, backup ID, and metadata path. Passwords, cookies, CSRF values, SAS values, S3 secret keys, access tokens, authorization headers, and client secrets are never logged.
@@ -77,6 +80,7 @@ sudo ./update.sh
 ## Security model and limitations
 
 - Backups contain sensitive system configuration. Protect the host, directory, mail route, and recipients accordingly.
+- With age enabled, plaintext exists temporarily during download/encryption. Use encrypted host storage when transient data and deleted blocks must also be protected.
 - A size/hash check proves transfer consistency, not semantic restorability. Schedule restore tests on a non-production UniFi instance.
 - Graph's simple JSON `sendMail` route is intentionally limited to files below 2,800,000 bytes by default. Larger backups remain local and make the service fail clearly.
 - Email is transport, not an ideal backup vault. Prefer encrypted, access-controlled storage for large or long-term copies.
@@ -87,7 +91,7 @@ See [SECURITY.md](SECURITY.md) for reporting and [docs/SECURITY.md](docs/SECURIT
 
 ## Project status
 
-Version 1.1.0. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, or ntfy.
+Version 1.2.0. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
 
 ## License
 

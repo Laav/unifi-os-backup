@@ -1,6 +1,6 @@
-# ntfy notifications
+# Notifications
 
-ntfy is an optional status-notification channel. It never carries the `.unifi` file, credentials, SHA256, signed storage URLs, or Graph tokens. Microsoft Graph mail remains a separate optional channel.
+ntfy and generic HTTPS webhooks are optional status-notification channels. Neither carries the `.unifi` attachment. Microsoft Graph mail remains a separate optional channel.
 
 Install a protected configuration example:
 
@@ -33,6 +33,8 @@ NTFY_ALLOW_ANONYMOUS="false"
 Bearer authentication is placed in a mode-0600 temporary header file. The topic URL is placed in a mode-0600 curl configuration file, so neither appears in the process list. Anonymous publishing requires the explicit `NTFY_ALLOW_ANONYMOUS=true` opt-in and is not recommended.
 
 Failure notifications are sent after the local status file records the failure. If the previous run failed and a later run succeeds, one recovery notification is sent. Success notifications are off by default to reduce noise. Notification failure is logged but does not replace or hide the backup result.
+
+The hourly monitor can also emit transition-only `stale_warning`, `stale_critical`, and `stale_recovery` notifications. See [MONITORING.md](MONITORING.md). For structured JSON and monitoring/RMM integration, see [WEBHOOKS.md](WEBHOOKS.md).
 
 No ntfy tags are used, because recognized tags may be rendered as icons or emoji. Messages contain plain text only.
 
