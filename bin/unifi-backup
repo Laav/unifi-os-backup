@@ -45,6 +45,7 @@ common_file="$script_dir/../lib/unifi-backup-common.sh"
 [[ -r $common_file ]] || common_file="/usr/local/lib/unifi-backup/common.sh"
 [[ -r $common_file ]] || { echo "$PROGRAM: ERROR: common library not found" >&2; exit 69; }
 # shellcheck source=../lib/unifi-backup-common.sh
+# shellcheck disable=SC1091
 source "$common_file"
 
 log_event() { ub_info "$@"; }
@@ -235,6 +236,8 @@ tmp_download_headers=""
 tmp_backup=""
 tmp_csrf_header=""
 
+# Called indirectly from cleanup(), which itself is registered as an EXIT trap.
+# shellcheck disable=SC2317,SC2329
 write_run_status() {
   local rc=$1 state_message=$2 completed_timestamp duration status_dir
   completed_timestamp=$(date +%s)
@@ -335,6 +338,8 @@ finally:
 PY
 }
 
+# Called indirectly from cleanup(), which itself is registered as an EXIT trap.
+# shellcheck disable=SC2317,SC2329
 send_run_notification() {
   local rc=$1 event="" message="" notifier
   [[ $ENABLE_NTFY == "true" ]] || return 0

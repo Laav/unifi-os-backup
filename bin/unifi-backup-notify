@@ -30,6 +30,7 @@ common_file="$script_dir/../lib/unifi-backup-common.sh"
 [[ -r $common_file ]] || common_file="/usr/local/lib/unifi-backup/common.sh"
 [[ -r $common_file ]] || { echo "$PROGRAM: ERROR: common library not found" >&2; exit 69; }
 # shellcheck source=../lib/unifi-backup-common.sh
+# shellcheck disable=SC1091
 source "$common_file"
 
 die() { local message=$1 code=${2:-1}; ub_error notification_failed "$message" exit_code "$code"; exit "$code"; }

@@ -58,7 +58,7 @@ assert status["last_success"]["sha256"] == metadata["backup"]["sha256"]
 PY
 grep -q '^unifi_backup_last_run_success 1$' "$tmp/backups/unifi_backup.prom" || { echo "FAIL: atomic textfile metrics are incorrect" >&2; exit 1; }
 
-status_json=$($root/bin/unifi-backup-status --status-file "$tmp/backups/status.json" --format json --warning-age-hours 192 --critical-age-hours 216)
+status_json=$("$root/bin/unifi-backup-status" --status-file "$tmp/backups/status.json" --format json --warning-age-hours 192 --critical-age-hours 216)
 python3 - "$status_json" <<'PY'
 import json, sys
 data=json.loads(sys.argv[1])
@@ -75,12 +75,12 @@ set -e
 [[ $backup_rc -eq 74 ]] || { echo "FAIL: invalid response returned exit $backup_rc instead of 74" >&2; exit 1; }
 
 set +e
-status_text=$($root/bin/unifi-backup-status --status-file "$tmp/backups/status.json" --format text)
+status_text=$("$root/bin/unifi-backup-status" --status-file "$tmp/backups/status.json" --format text)
 status_rc=$?
 set -e
 [[ $status_rc -eq 2 && $status_text == CRITICAL* ]] || { echo "FAIL: failed run was not CRITICAL" >&2; exit 1; }
-[[ $($root/bin/unifi-backup-status --status-file "$tmp/backups/status.json" --format snmp) == "2" ]] || { echo "FAIL: SNMP status is not numeric CRITICAL" >&2; exit 1; }
-$root/bin/unifi-backup-status --status-file "$tmp/backups/status.json" --format prometheus | grep -q '^unifi_backup_last_run_success 0$' || {
+[[ $("$root/bin/unifi-backup-status" --status-file "$tmp/backups/status.json" --format snmp) == "2" ]] || { echo "FAIL: SNMP status is not numeric CRITICAL" >&2; exit 1; }
+"$root/bin/unifi-backup-status" --status-file "$tmp/backups/status.json" --format prometheus | grep -q '^unifi_backup_last_run_success 0$' || {
   echo "FAIL: Prometheus output did not expose the failed run" >&2
   exit 1
 }
