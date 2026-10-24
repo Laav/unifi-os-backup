@@ -12,6 +12,9 @@ from core import Failure, atomic
 from verify import verify
 from storage import Store
 from replication import replicate
+from replication import remote_check
+from retry_queue import retry, pins
+from core import state, save_state
 
 
 class EngineCase(unittest.TestCase):
@@ -88,6 +91,31 @@ class EngineCase(unittest.TestCase):
         self.assertEqual(report['replication'], 'partial')
         self.assertEqual(report['local_backup'], 'success')
         self.assertTrue(report['policy_satisfied'])
+
+    def test_persistent_retry_pins_and_recovery(self):
+        p = self.backup()
+        config = self.filesystem()
+        marker = Path(config['FILESYSTEM_PATH']) / '.unifi-backup-target'
+        marker.unlink()
+        sections = {'main': self.c, 'disk': config}
+        self.assertFalse(replicate(p, sections)['policy_satisfied'])
+        self.assertIn(p.name, pins(self.c))
+        self.assertEqual(len(state(self.c, 'retry-queue.json')['tasks']), 1)
+        marker.write_text('disk')
+        result = retry(sections, force=True)
+        self.assertTrue(result[0]['policy_satisfied'])
+        self.assertNotIn(p.name, pins(self.c))
+        remote = Path(config['FILESYSTEM_PATH']) / p.name
+        remote.write_bytes(b'corrupt')
+        with self.assertRaises(Failure):
+            remote_check(Store('disk', config), p, self.c, True)
+
+    def test_dead_letter_unpins_at_attempt_limit(self):
+        self.c['RETRY_MAX_ATTEMPTS'] = '1'
+        p = self.backup()
+        replicate(p, {'main': self.c, 'broken': {'TARGET_TYPE': 'filesystem', 'FILESYSTEM_PATH': '/does-not-exist', 'TARGET_REQUIRED': 'true'}})
+        self.assertFalse(pins(self.c))
+        self.assertEqual(next(iter(state(self.c, 'retry-queue.json')['tasks'].values()))['status'], 'dead')
 
 
 if __name__ == '__main__':

@@ -9,6 +9,10 @@ import sys
 from core import Failure, select
 from verify import record, verify
 from replication import replicate
+from replication import remote_check
+from storage import Store
+from retry_queue import retry
+from core import iso, save_state, state, metric, now
 
 
 def configuration():
@@ -44,6 +48,8 @@ def parser(command):
     p.add_argument('--decrypt-check', action='store_true')
     p.add_argument('--identity')
     p.add_argument('--target')
+    p.add_argument('--full', action='store_true')
+    p.add_argument('--force-due', action='store_true', help='Retry pending jobs now; attempt/age limits still apply')
     return p
 
 
@@ -76,6 +82,33 @@ def main():
         if not args.quiet:
             print(json.dumps({'results': reports}, separators=(',', ':')) if args.json else '\n'.join(f"Local={r['local_backup']} replication={r['replication']} policy={r['policy_satisfied']}" for r in reports))
         return 0 if all(r['policy_satisfied'] for r in reports) else 75
+    if command == 'retry':
+        results = retry(sections, args.force_due)
+        if not args.quiet:
+            print(json.dumps({'results': results}, separators=(',', ':')))
+        return 0 if all(r['policy_satisfied'] for r in results) else 75
+    if command == 'remote-verify':
+        results = []
+        for path in select(c, args):
+            for identifier, config in sections.items():
+                if identifier == 'main':
+                    continue
+                result = {'filename': path.name, 'target': identifier, 'success': False}
+                try:
+                    store = Store(identifier, config)
+                    result.update(remote_check(store, path, c, args.full))
+                    result['success'] = True
+                except Failure as exc:
+                    result['error'] = str(exc)
+                results.append(result)
+        if not results:
+            raise Failure('No remote targets selected', 78)
+        save_state(c, 'remote-verification.json', {'schema_version': 1, 'checked_at': iso(), 'results': results})
+        metric(c, 'unifi_remote_verification.prom', {'unifi_backup_remote_verification_success': int(all(x['success'] for x in results)),
+               'unifi_backup_remote_verification_failures': sum(not x['success'] for x in results), 'unifi_backup_remote_verification_timestamp_seconds': now()})
+        if not args.quiet:
+            print(json.dumps({'results': results}, separators=(',', ':')))
+        return 0 if all(r['success'] for r in results) else 74
     raise Failure('Unsupported command', 64)
 
 

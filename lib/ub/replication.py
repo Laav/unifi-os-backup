@@ -5,6 +5,7 @@ from pathlib import Path
 from core import Failure, atomic, digest, integer, iso, load, metadata, metric, now, save_state, state, state_dir
 from storage import Store
 from verify import verify
+from retry_queue import update as queue_update
 
 
 def remote_check(store, path, c, full=False):
@@ -62,16 +63,19 @@ def replicate(path, sections):
             targets[identifier] = {'status': 'success', 'type': store.kind,
                                    'verification': verification, 'duration_seconds': now() - start,
                                    'completed_at': iso(), 'required': store.required}
+            queue_update(c, path, identifier, True)
         except Failure as exc:
             targets[identifier] = {'status': 'failed', 'error': str(exc), 'error_code': exc.code,
                                    'required': config.get('TARGET_REQUIRED', 'false') == 'true', 'type': config.get('TARGET_TYPE', 'unknown')}
+            queue_update(c, path, identifier, False, str(exc))
     successes = sum(item['status'] == 'success' for item in targets.values())
     minimum = integer(c, 'BACKUP_REQUIRED_TARGETS', 0, 0, len(targets))
     policy = successes >= minimum and all(not x['required'] or x['status'] == 'success' for x in targets.values())
     replication_status = 'success' if successes == len(targets) else ('partial' if successes else 'failed')
     report = {'local_backup': 'success', 'replication': replication_status, 'policy_satisfied': policy,
               'required_remote_count': minimum, 'successful_remote_count': successes, 'targets': targets, 'updated_at': iso()}
-    doc['replication'] = report
+    previous = doc.get('replication', {}).get('targets', {})
+    doc['replication'] = {**report, 'targets': {**previous, **targets}}
     atomic(str(path) + '.json', doc)
     data = state(c, 'replication.json', {'schema_version': 1, 'backups': {}})
     data['backups'][doc['backup']['id']] = report
