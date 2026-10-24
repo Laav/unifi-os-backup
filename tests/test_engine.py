@@ -18,6 +18,8 @@ from core import state, save_state
 from retention import apply as retain
 from policy import settings, confirmation
 from unittest.mock import patch
+from argparse import Namespace
+from recovery import restore
 
 
 class EngineCase(unittest.TestCase):
@@ -147,6 +149,37 @@ class EngineCase(unittest.TestCase):
             self.assertTrue(confirmation(store, self.backup().name)['confirmed'])
         with patch.object(store, 'head', return_value={'headers': {}}):
             self.assertFalse(confirmation(store, 'ignored')['confirmed'])
+
+    def restore_args(self, **values):
+        return Namespace(backup_id=None, date=None, list=False, latest=True, dry_run=False,
+                         identity=None, verify_only=False, output=str(self.root / 'restore'), **values)
+
+    def test_local_and_remote_restore(self):
+        p = self.backup()
+        report = restore(self.c, self.restore_args())
+        self.assertEqual(Path(report['output_file']).read_bytes(), p.read_bytes())
+        self.assertFalse(report['restore_tested'])
+        with self.assertRaises(Failure):
+            restore(self.c, self.restore_args())
+        config = self.filesystem()
+        replicate(p, {'main': self.c, 'disk': config})
+        args = self.restore_args()
+        args.output = str(self.root / 'remote-restore')
+        report = restore(self.c, args, Store('disk', config))
+        self.assertEqual(report['origin'], 'disk')
+        self.assertEqual(Path(report['output_file']).read_bytes(), p.read_bytes())
+
+    def test_restore_dry_run_and_corrupt_rejection(self):
+        p = self.backup()
+        args = self.restore_args()
+        args.dry_run = True
+        self.assertTrue(restore(self.c, args)['dry_run'])
+        self.assertFalse(Path(args.output).exists())
+        args.dry_run = False
+        p.write_bytes(b'corrupt')
+        with self.assertRaises(Failure):
+            restore(self.c, args)
+        self.assertFalse(Path(args.output).exists())
 
 
 if __name__ == '__main__':

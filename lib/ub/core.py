@@ -88,7 +88,16 @@ def atomic(path, value, mode=0o600):
             out.flush()
             os.fsync(out.fileno())
         os.chmod(temp, mode)
-        os.replace(temp, path)
+        for attempt in range(6):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                # Windows virus scanners briefly hold freshly read files.
+                # Linux errors propagate immediately.
+                if os.name != 'nt' or attempt == 5:
+                    raise
+                time.sleep(0.05)
         if os.name != 'nt':
             descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:

@@ -15,6 +15,7 @@ from retry_queue import retry
 from core import iso, save_state, state, metric, now
 from policy import capability, confirmation, settings
 from retention import apply as retain
+from recovery import restore
 
 
 def configuration():
@@ -54,6 +55,10 @@ def parser(command):
     p.add_argument('--force-due', action='store_true', help='Retry pending jobs now; attempt/age limits still apply')
     p.add_argument('--check', action='store_true')
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--list', action='store_true')
+    p.add_argument('--date', help='ISO date prefix, such as 2026-10-24')
+    p.add_argument('--output', help='Private restore destination directory')
+    p.add_argument('--verify-only', action='store_true')
     return p
 
 
@@ -69,6 +74,12 @@ def main():
         sections = {'main': c, args.target: sections[args.target]}
     if args.decrypt_check and not args.identity:
         raise Failure('--decrypt-check requires a protected --identity file', 78)
+    if command == 'restore':
+        store = Store(args.target, sections[args.target]) if args.target else None
+        report = restore(c, args, store)
+        if not args.quiet:
+            print(json.dumps(report, separators=(',', ':')) if args.json else json.dumps(report, indent=2))
+        return 0
     if command == 'retention':
         report = retain(c, args.dry_run)
         if not args.quiet:
