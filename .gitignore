@@ -40,3 +40,5 @@ cache/
 Thumbs.db
 coverage/
 test-results/
+__pycache__/
+*.pyc

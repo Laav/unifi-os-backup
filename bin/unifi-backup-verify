@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+ub_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ub_lib="$ub_dir/../lib"
+[[ -f $ub_lib/unifi-backup-runtime.sh ]] || ub_lib=/usr/local/lib/unifi-backup
+# shellcheck source=../lib/unifi-backup-runtime.sh
+# shellcheck disable=SC1091
+source "$ub_lib/unifi-backup-runtime.sh"
+ub_runtime verify "$@"
