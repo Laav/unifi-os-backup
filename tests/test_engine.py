@@ -21,6 +21,7 @@ from unittest.mock import patch
 from argparse import Namespace
 from recovery import restore
 from anomaly import evaluate
+from config_diff import compare, extract
 
 
 class EngineCase(unittest.TestCase):
@@ -190,6 +191,18 @@ class EngineCase(unittest.TestCase):
         self.assertEqual(evaluate(rows, self.c)['severity'], 'WARNING')
         rows[-1]['controller'] = 'different'
         self.assertEqual(evaluate(rows, self.c)['status'], 'cold_start')
+
+    def test_configuration_diff_redacts_every_value(self):
+        old = {'categories': {'wifi': [{'id': 'private-user', 'password': 'old-secret', 'ssid': 'internal-name'}], 'firewall': [{'id': 'one', 'enabled': True}]}}
+        new = {'categories': {'wifi': [{'id': 'private-user', 'password': 'new-secret', 'ssid': 'internal-name'}, {'id': 'another', 'password': 'secret'}]}}
+        report = compare(old, new)
+        self.assertEqual(report['summary'], {'added': 1, 'removed': 1, 'modified': 1, 'unchanged': 0})
+        rendered = json.dumps(report)
+        for secret in ('private-user', 'old-secret', 'new-secret', 'internal-name'):
+            self.assertNotIn(secret, rendered)
+        p = self.backup()
+        with self.assertRaisesRegex(Failure, 'Unsupported native UniFi'):
+            extract(p, self.c)
 
 
 if __name__ == '__main__':

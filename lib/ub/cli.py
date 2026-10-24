@@ -17,6 +17,8 @@ from policy import capability, confirmation, settings
 from retention import apply as retain
 from recovery import restore
 from anomaly import analyze, history_record
+from config_diff import diff
+from core import local_files, metadata
 
 
 def configuration():
@@ -65,6 +67,14 @@ def parser(command):
     p.add_argument('--run-id')
     p.add_argument('--exit-code', type=int, default=0)
     p.add_argument('--duration', type=int, default=0)
+    p.add_argument('--old')
+    p.add_argument('--new')
+    p.add_argument('--latest-two', action='store_true')
+    p.add_argument('--backup-id-old')
+    p.add_argument('--backup-id-new')
+    p.add_argument('--summary', action='store_true')
+    p.add_argument('--category')
+    p.add_argument('--unchanged', action='store_true')
     return p
 
 
@@ -89,6 +99,29 @@ def main():
     if command == 'history':
         history_record(c, {'id': args.run_id, 'exit_code': args.exit_code, 'duration_seconds': args.duration,
                           'recorded_at': iso(), 'failure_category': {77: 'authentication', 74: 'download', 75: 'replication'}.get(args.exit_code, 'none')})
+        return 0
+    if command == 'diff':
+        older, newer = args.old, args.new
+        if args.latest_two:
+            items = local_files(c)
+            if len(items) < 2:
+                raise Failure('Two backups are required', 66)
+            newer, older = items[:2]
+        if args.backup_id_old or args.backup_id_new:
+            matches = {}
+            for path in local_files(c):
+                bid = metadata(path)['backup']['id']
+                if bid in matches:
+                    raise Failure('Ambiguous backup ID', 65)
+                matches[bid] = path
+            older, newer = matches.get(args.backup_id_old), matches.get(args.backup_id_new)
+        if not older or not newer:
+            raise Failure('Select --old/--new, --latest-two or both backup IDs', 64)
+        report = diff(c, older, newer, args.category, args.unchanged)
+        if args.summary:
+            report.pop('changes')
+        if not args.quiet:
+            print(json.dumps(report, separators=(',', ':')) if args.json else json.dumps(report, indent=2))
         return 0
     if command == 'analyze':
         if args.baseline is not None and not 2 <= args.baseline <= 200:
