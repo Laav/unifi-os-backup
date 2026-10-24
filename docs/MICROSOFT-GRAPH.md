@@ -38,7 +38,7 @@ GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES="2800000"
 
 Then set `ENABLE_EMAIL="true"` in `unifi-backup.env`. Keep both files root:root 0600.
 
-The OAuth request uses the v2 token endpoint, client credentials grant, and `https://graph.microsoft.com/.default`. The secret is URL-encoded by Python and streamed to curl via stdin. The access token is held briefly in a root-only temporary header file, never in a process argument or log, and removed by a trap. `GRAPH_AUTH_METHOD` makes the authentication strategy explicit; only `client_secret` is accepted in 1.2.0. A later certificate implementation can add a separate assertion generator without changing backup or mail-payload logic.
+The OAuth request uses the v2 token endpoint, client credentials grant, and `https://graph.microsoft.com/.default`. The secret is URL-encoded by Python and streamed to curl via stdin. The access token is held briefly in a root-only temporary header file, never in a process argument or log, and removed by a trap. `GRAPH_AUTH_METHOD` makes the authentication strategy explicit; only `client_secret` is accepted in 1.3.0. A later certificate implementation can add a separate assertion generator without changing backup or mail-payload logic.
 
 ## Attachment limit
 

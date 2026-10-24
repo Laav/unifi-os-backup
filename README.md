@@ -2,6 +2,8 @@
 
 Production-oriented Bash tooling that signs in to a local UniFi OS controlplane, downloads and validates a full System Config Backup, stores it atomically, calculates SHA256, writes metadata and a central catalog, applies defensive retention, exports freshness monitoring, and can replicate to Azure Blob or S3-compatible storage. Optional integrations include age encryption at rest, Microsoft Graph mail, ntfy, and signed generic HTTPS webhooks.
 
+Version 1.3 adds repeatable integrity verification, independent storage targets, persistent replication retries, provider immutability checks, GFS retention, recovery preparation, deterministic anomaly analysis, and a privacy-preserving configuration-export diff engine. Native opaque `.unifi` semantic parsing is explicitly unsupported; see [format capabilities](docs/CONFIG-DIFF.md).
+
 > [!IMPORTANT]
 > `POST /api/auth/login` and `GET /api/backup/download` are observed UniFi OS **controlplane endpoints**, not a documented stable public Ubiquiti API. UniFi upgrades can change or remove them. This project fails closed when authentication, status, type, size, or content differs from the expected behavior. Read [Endpoint compatibility](docs/TROUBLESHOOTING.md#endpoint-compatibility) before production use.
 
@@ -77,6 +79,42 @@ sudo ./update.sh
 
 `update.sh` never replaces existing configuration and never changes backups. It may create newly introduced optional configuration files with fictitious placeholders. Review [UPGRADING.md](docs/UPGRADING.md) and merge new main-config options explicitly.
 
+## Verification and recovery
+
+```bash
+sudo unifi-backup-verify --latest --json
+sudo unifi-backup-remote-verify --latest --full --target s3-primary --json
+sudo unifi-backup-retry --json
+sudo unifi-backup-retention --dry-run --json
+sudo unifi-backup-storage-policy --check --target s3-primary --json
+sudo unifi-backup-restore --list --json
+sudo unifi-backup-restore --target s3-primary --latest --output /secure/restore
+sudo unifi-backup-analyze --latest --explain
+sudo unifi-backup-diff --latest-two --summary
+```
+
+Read [VERIFICATION.md](docs/VERIFICATION.md), [MULTI-TARGET.md](docs/MULTI-TARGET.md), [RETRIES.md](docs/RETRIES.md), [IMMUTABILITY.md](docs/IMMUTABILITY.md), [DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md), [ANOMALIES.md](docs/ANOMALIES.md), and [CONFIG-DIFF.md](docs/CONFIG-DIFF.md) before enabling the associated automation. New verify/remote-verify/retry timers are installed disabled. Local creation, byte integrity, replication, immutability, anomalies and actual restore testing are separate outcomes.
+
+## Versioning and releases
+
+Every substantive user-facing release requires a new Semantic Versioning version, updated changelog, annotated immutable tag, passing local/CI checks and a published GitHub Release. New compatible features use a MINOR increment; compatible fixes use PATCH; actual breaking changes use MAJOR. Editorial-only changes need no release.
+
+Published tags must never be moved or overwritten, and different code must never replace an existing version. Correct a faulty release with a new version and an explicit advisory/release note. The permanent maintainer procedure is [docs/RELEASING.md](docs/RELEASING.md).
+
+Git tags and published GitHub Releases on the intended origin are authoritative for published versions; README/changelog entries alone do not establish a release. `unifi-backup --version` reports the installed source version.
+
+For a stable release checkout:
+
+```bash
+git status --short
+sudo git fetch origin --tags
+sudo git switch --detach v1.3.0
+sudo ./update.sh
+unifi-backup --version
+```
+
+The updater installs the currently checked-out source; it does not silently select or download a release. The original `git pull --ff-only` workflow remains available on `main`.
+
 ## Security model and limitations
 
 - Backups contain sensitive system configuration. Protect the host, directory, mail route, and recipients accordingly.
@@ -91,7 +129,7 @@ See [SECURITY.md](SECURITY.md) for reporting and [docs/SECURITY.md](docs/SECURIT
 
 ## Project status
 
-Version 1.2.0. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
+Version 1.3.0. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
 
 ## License
 

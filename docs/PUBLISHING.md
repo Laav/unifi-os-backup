@@ -1,5 +1,7 @@
 # Publishing checklist
 
+Every substantive release must also follow the permanent [RELEASING.md](RELEASING.md) procedure and README's **Versioning and releases** policy. Tags are immutable; a new release version is required for changed released code.
+
 The source tree is designed to be public, but the final GitHub owner/repository URL is environment-specific and cannot be inferred. Before the first public push:
 
 1. Verify that every canonical repository URL points to `Laav/unifi-os-backup`.

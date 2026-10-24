@@ -1,5 +1,7 @@
 # Encryption at rest
 
+Version 1.3 can recheck encrypted bytes, optionally verify actual age decryption against the original plaintext metadata, and prepare decrypted recovery files. See [VERIFICATION.md](VERIFICATION.md) and [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md). A hash-only check never claims decryption or a successful UniFi restore. Scheduled decryption is opt-in and requires an operator-supplied protected identity; the normal backup job still needs public recipients only.
+
 Completed backups can optionally be encrypted with [`age`](https://github.com/FiloSottile/age). Encryption is disabled by default and does not change existing installations until explicitly enabled.
 
 The design uses public recipients on the backup host. The private recovery identity should be generated, protected, and tested on a separate recovery system. The backup host rejects recipient files containing common age/private-key markers.

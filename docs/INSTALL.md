@@ -7,6 +7,7 @@
 - Root access for installation and production execution.
 - Network reachability to the HTTPS UniFi OS controlplane.
 - `age` only when optional encryption at rest is enabled.
+- Python's standard library is sufficient for the new data/storage helpers; no pip packages or cloud SDKs are needed.
 
 On Ubuntu:
 
@@ -62,6 +63,10 @@ The standalone installer requires Git, clones into `/opt/unifi-os-backup`, then 
 | `/etc/systemd/system/unifi-backup*` | 0644 | Backup and freshness-monitor units/timers |
 
 The examples are copied only when the destination does not exist. Re-running `install.sh` preserves configuration and backups.
+
+Version 1.3 also installs `unifi-backup-verify`, `-replicate`, `-remote-verify`, `-retry`, `-storage-policy`, `-retention`, `-restore`, `-analyze` and `-diff`, the shared `lib/ub` Python modules, a protected `targets.d` example, and three optional timers. Verification/remote-verification/retry timers are not enabled or started by installation/update. Their config flags also default to false.
+
+For a stable reproducible installation, select the published `v1.3.0` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
 
 ## Activate
 

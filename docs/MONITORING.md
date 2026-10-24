@@ -1,5 +1,13 @@
 # Monitoring
 
+## Separate operational results
+
+Version 1.3 records a valid local creation independently of overall replication-policy failure. `last_run.local_backup_status` records that distinction and `last_success` advances for a valid local artifact even if a required remote target fails. The overall run/systemd exit still reports the policy failure. Integrity, remote checks, anomalies and retry tasks remain independent JSON documents and catalog annotations.
+
+New private state: `verification.json`, `remote-verification.json`, `replication.json`, `retry-queue.json`, `history.json`, `anomalies.json`, and `config-diff.json`. Dedicated world-readable metric files contain numeric aggregates only: `unifi_verification.prom`, `unifi_remote_verification.prom`, `unifi_replication.prom`, `unifi_retry.prom`, and `unifi_anomaly.prom`. No object IDs, customer-controlled names or unbounded labels are added to metrics.
+
+The status command reports failed local verification as CRITICAL and pending/dead replication, failed remote checks or anomalies as WARNING when no more severe condition applies. Existing text/JSON/Prometheus/SNMP interfaces remain available to Auvik, RMM, Zabbix and Checkmk adapters. Scheduled operation failures use the existing ntfy/webhook channel; anomaly notices use warning status. Repeated scheduled failures can create repeated alerts; deduplicate in the receiver when desired.
+
 Monitoring should answer whether a validated backup exists and whether the most recent run succeeded—not merely whether the timer fired.
 
 Each real backup run atomically updates:

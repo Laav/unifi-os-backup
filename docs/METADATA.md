@@ -29,3 +29,5 @@ When Graph email is enabled, the message body includes the backup ID, encryption
 The consolidated inventory in `/var/lib/unifi-backup/catalog.json` is documented in [CATALOG.md](CATALOG.md).
 
 Metadata improves inventory and integrity checks but does not prove authenticity by itself. Protect it with the backup, and store hashes or signed manifests in a separately controlled system when tamper evidence is required.
+
+Version 1.3 adds measured stage timings and a `replication` object with per-target status, verification, duration and confirmed immutability. These are additive schema-1 fields. Provider metadata sidecars are immutable identity snapshots; later operational results live in the local sidecar/state/catalog, without overwriting cloud objects. Local byte validity, replication policy and manual restore tests are never collapsed into one boolean.

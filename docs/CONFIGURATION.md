@@ -13,6 +13,8 @@ sudo chmod 0600 /etc/unifi-backup/*.env
 
 ## Settings
 
+The additive 1.3 settings preserve 1.2 defaults. See the complete commented main example for literal defaults. New commands share the protected Bash config loader and the same operation lock.
+
 | Variable | Default/example | Meaning |
 |---|---|---|
 | `UNIFI_URL` | `https://unifi.example.invalid:11443` | HTTPS origin only; no path, query, fragment, or embedded credentials |
@@ -49,6 +51,33 @@ sudo chmod 0600 /etc/unifi-backup/*.env
 | `NOTIFY_ON_FAILURE` | `true` | Notify when a tracked backup run fails |
 | `NOTIFY_ON_RECOVERY` | `true` | Notify once after a failure is followed by success |
 | `LOCK_FILE` | `/run/unifi-backup/unifi-backup.lock` | Lock in the private runtime directory |
+| `VERIFY_ENABLED` | `false` | Post-creation/scheduled repeated verification |
+| `VERIFY_DECRYPT_CHECK` | `false` | Scheduled age decryption check |
+| `VERIFY_IDENTITY_FILE` | empty | Protected, operator-supplied age identity for that check |
+| `BACKUP_TARGETS` | empty | Space-separated target IDs; overrides legacy remote target |
+| `BACKUP_TARGET_CONFIG_DIR` | `/etc/unifi-backup/targets.d` | Root-owned mode-0700 target configuration directory |
+| `BACKUP_REQUIRED_TARGETS` | `0` | Minimum successful remote targets, excluding local; required targets must also pass |
+| `REMOTE_VERIFY_ENABLED` | `false` | Opt-in scheduled full remote verification |
+| `RETRY_ENABLED` | `false` | Opt-in scheduled persistent queue worker |
+| `RETRY_MAX_ATTEMPTS` | `8` | Total upload attempts, including initial attempt |
+| `RETRY_BASE_INTERVAL` | `300` | Initial backoff seconds |
+| `RETRY_MAX_INTERVAL` | `86400` | Backoff cap seconds |
+| `RETRY_MAX_AGE_DAYS` | `7` | Active task age cap; exhausted tasks dead-letter and unpin |
+| `RETRY_QUEUE_LIMIT` | `1000` | Maximum pending tasks and retained terminal records |
+| `RETENTION_MODE` | `legacy` | `legacy` or opt-in `gfs` |
+| `GFS_DAILY/WEEKLY/MONTHLY/YEARLY` | `0` | Numbers of distinct UTC periods protected in GFS mode |
+| `RESTORE_STAGING_DIR` | `/var/lib/unifi-backup/restore` | Private mode-0700 preparation destination |
+| `RESTORE_MAX_BYTES` | `10737418240` | Maximum downloaded/decrypted backup bytes |
+| `ANOMALY_ENABLED` | `false` | Optional post-backup analysis |
+| `ANOMALY_BASELINE/MIN_SAMPLES` | `20` / `5` | Comparable historical sample window/minimum |
+| `ANOMALY_SIZE_PERCENT` | `50` | Minimum median-relative size deviation percent |
+| `ANOMALY_DURATION_PERCENT` | `200` | Timing increase percent threshold |
+| `ANOMALY_IDENTICAL_COUNT` | `0` | Optional repeated plaintext hash streak threshold; zero disables |
+| `ANOMALY_FAILURE_STREAK` | `3` | Consecutive same-category operational failures |
+| `ANOMALY_HISTORY_LIMIT` | `200` | Bounded persisted run history |
+| `DIFF_ENABLED` | `false` | Optional latest-two normalized-export comparison |
+
+Target files independently define provider, required status, verification level, credentials and timeouts. Retry scheduling/limits are installation-wide so a single bounded worker controls total pressure; all tasks retain their own target ID, attempts and due time. See [MULTI-TARGET.md](MULTI-TARGET.md), [RETRIES.md](RETRIES.md), and [IMMUTABILITY.md](IMMUTABILITY.md) for exact policy semantics.
 
 See [ENCRYPTION.md](ENCRYPTION.md), [RETENTION.md](RETENTION.md), [STORAGE.md](STORAGE.md), [MONITORING.md](MONITORING.md), [METADATA.md](METADATA.md), [CATALOG.md](CATALOG.md), [NOTIFICATIONS.md](NOTIFICATIONS.md), and [WEBHOOKS.md](WEBHOOKS.md) for detailed semantics.
 

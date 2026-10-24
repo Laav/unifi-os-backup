@@ -6,6 +6,13 @@ The root service reads local secrets, talks to a configured UniFi HTTPS origin a
 
 ## Controls
 
+- New maintenance operations load protected Bash assignments, transport credentials over stdin to shared data modules, and serialize with the backup/retention lock.
+- Provider requests disable curl's automatic rc file, require HTTPS, reject redirects and unsafe object names, and place signed URLs/headers in private temporary files.
+- Full remote checks hash downloaded bytes. Conditional-write conflicts are accepted only after content identity checks; metadata snapshots must identify the same original backup.
+- Retry pins protect active replication sources. Queue corruption fails retention safely; explicit terminal dead letters release pins with visible state.
+- Restore stages verified files under private permissions, refuses overwrite/path traversal/symlinks, and never imports to a controller.
+- Diff output contains no arbitrary source keys/values or raw object IDs. Unknown native formats fail explicitly.
+
 - Secrets are outside Git in root:root 0600 files under a 0700 directory.
 - `umask 077`, `mktemp`, traps, a private systemd `/tmp`, and mode 0600 protect transient material.
 - Password JSON and OAuth form encoding are done by Python; secret values are streamed on stdin.

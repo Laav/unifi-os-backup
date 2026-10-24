@@ -1,5 +1,37 @@
 # Upgrading
 
+## Upgrade 1.2.0 source to the published 1.3.0 release
+
+Origin had no published release/tag before 1.3.0; the preceding source version was 1.2.0 at `0d96e1f`. The updater continues to install the currently checked-out source. It does not fetch or choose a release itself.
+
+```bash
+cd /opt/unifi-os-backup
+git status --short
+sudo git fetch origin --tags
+sudo git switch --detach v1.3.0
+sudo ./update.sh
+unifi-backup --version
+sudo unifi-backup-check --live
+sudo systemctl start unifi-backup.service
+sudo unifi-backup-verify --latest --json
+```
+
+Review local modifications before switching. Existing credentials, age recipients/identities, backups and status data are preserved. No new cloud operation or lock is enabled by default. New optional settings are in the main example, and `targets.d/target.env.example` is installed without activating it.
+
+Enable only the required scheduled operations after configuration/testing:
+
+```bash
+sudo systemctl enable --now unifi-backup-verify.timer
+sudo systemctl enable --now unifi-backup-remote-verify.timer
+sudo systemctl enable --now unifi-backup-retry.timer
+```
+
+Their corresponding `VERIFY_ENABLED`, `REMOTE_VERIFY_ENABLED`, and `RETRY_ENABLED` flags also need `true`. Timer intervals are independent systemd drop-ins; retry backoff is independent of timer frequency. A missing new flag means disabled. New remote reads/listing/immutability require reviewed permissions; legacy write-only credentials remain sufficient for the original uploader.
+
+For a later release rollback, select the previously verified published tag and rerun its updater. Because no preceding published release exists for this first release, the documented source rollback is `git switch --detach 0d96e1f`, then `sudo ./update.sh`. First disable the new timers, preserve monitoring/queue files and inspect pending/dead tasks; the old version does not understand retry pins or GFS. Do not run old retention against backups still required by the new retry queue. Encrypted artifacts and original metadata remain compatible, but new operational annotations may be ignored by old tooling.
+
+The existing `main` workflow remains available: switch to `main`, review status, use `git pull --ff-only`, then run `update.sh`. Use the release tag for a reproducible stable installation. See [RELEASING.md](RELEASING.md).
+
 Read `CHANGELOG.md`, verify the commit/tag, and inspect changes to `bin/`, `systemd/`, and configuration examples.
 
 ```bash

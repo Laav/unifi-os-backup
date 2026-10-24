@@ -19,6 +19,8 @@ The commands use the established BSD `sysexits` range where practical. Monitorin
 | `130` | signal | SIGINT |
 | `143` | signal | SIGTERM |
 
+New maintenance commands use the same categories. Native-format diff capability errors use 69, corrupted verification uses 74, failed required replication uses 75, and anomaly analysis uses 1 for a warning. JSON reports retain separate local-integrity and replication outcomes. `unifi-backup-restore` prepares files only; success does not mean a controller was restored.
+
 HTTP and curl error categories are included in the sanitized log message and JSON `event`; secrets and response bodies are not logged. systemd exposes the numeric result through `systemctl status unifi-backup.service`.
 
 ## Monitoring exit codes

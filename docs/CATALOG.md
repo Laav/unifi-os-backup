@@ -26,4 +26,6 @@ Normal backup and retention-only runs rebuild it automatically. Orphaned, oversi
 
 The catalog covers one installation/controller today. A central management system can collect this stable JSON schema from multiple backup hosts. Multi-controller orchestration remains a separate future feature.
 
+Additive 1.3 fields include per-backup last local verification and replication target results plus an `operational` section for remote verification, anomalies, redacted diff and retry queue. Existing schema-1 backup identities/sidecars remain valid. Verification/replication/retry/retention CLI operations refresh the catalog. State mutations share the backup lock; atomic replacement prevents partial JSON visibility.
+
 Catalog metadata records validation performed at backup creation. It does not decrypt or restore-test an age artifact, and it is not a cryptographic signature. Keep separately controlled monitoring history if tamper evidence is required.

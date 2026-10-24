@@ -1,5 +1,7 @@
 # Remote object storage
 
+Version 1.3 adds multiple destinations and a shared provider interface for upload, download, HEAD, listing, byte verification and policy inspection. See [MULTI-TARGET.md](MULTI-TARGET.md), [RETRIES.md](RETRIES.md), [IMMUTABILITY.md](IMMUTABILITY.md) and [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md). The legacy single-target configuration below retains its original write-only upload behavior; a nonempty `BACKUP_TARGETS` supersedes it without duplicate uploads.
+
 Remote storage is optional. A validated local backup is always completed first and is never deleted because an upload fails. Set one backend in `/etc/unifi-backup/unifi-backup.env`:
 
 ```bash
