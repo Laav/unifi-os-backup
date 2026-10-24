@@ -13,6 +13,25 @@ for script in "$source_dir/bin/unifi-backup" "$source_dir/bin/unifi-mail-backup"
 done
 
 # Existing configuration and backup data are deliberately never replaced or removed.
+for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli; do
+  [[ -f $source_dir/lib/ub/$module.py ]] || die "Missing data module: $module"
+done
+bash -n "$source_dir/lib/unifi-backup-runtime.sh"
+for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff; do
+  [[ -f $source_dir/bin/unifi-backup-$helper ]] || die "Missing helper: $helper"
+  bash -n "$source_dir/bin/unifi-backup-$helper"
+  install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-$helper" "/usr/local/sbin/unifi-backup-$helper"
+done
+install -d -o root -g root -m 0755 /usr/local/lib/unifi-backup/ub
+install -o root -g root -m 0644 "$source_dir/lib/unifi-backup-runtime.sh" /usr/local/lib/unifi-backup/unifi-backup-runtime.sh
+install -o root -g root -m 0644 "$source_dir/lib/ub/"*.py /usr/local/lib/unifi-backup/ub/
+for extra in verify remote-verify retry; do
+  install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup-$extra.service" "$source_dir/systemd/unifi-backup-$extra.timer" /etc/systemd/system/
+done
+install -d -o root -g root -m 0700 /etc/unifi-backup/targets.d
+if [[ ! -e /etc/unifi-backup/targets.d/target.env.example ]]; then
+  install -o root -g root -m 0600 "$source_dir/config/target.env.example" /etc/unifi-backup/targets.d/target.env.example
+fi
 install -o root -g root -m 0755 "$source_dir/bin/unifi-backup" /usr/local/sbin/unifi-backup
 install -o root -g root -m 0755 "$source_dir/bin/unifi-mail-backup" /usr/local/sbin/unifi-mail-backup
 install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-check" /usr/local/sbin/unifi-backup-check

@@ -8,10 +8,22 @@ import re
 import stat
 import tempfile
 import time
+import sys
 
 NAME = re.compile(r'^unifi_os_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.unifi(?:\.age)?$')
 OBJECT = re.compile(NAME.pattern[:-1] + r'(?:\.json)?$')
 SHA = re.compile(r'^[a-f0-9]{64}$')
+VERSION = '1.3.0'
+
+
+def event(c, name, message, **fields):
+    record = {'timestamp': iso(), 'program': 'unifi-backup-operations', 'level': 'info',
+              'event': name, 'message': message, **fields}
+    if c.get('LOG_FORMAT') == 'json':
+        print(json.dumps(record, separators=(',', ':'), ensure_ascii=True), file=sys.stderr)
+    else:
+        details = ' '.join(f'{key}={value}' for key, value in fields.items())
+        print(f'unifi-backup-operations: {message}' + (' ' + details if details else ''), file=sys.stderr)
 
 
 class Failure(Exception):
@@ -147,6 +159,8 @@ def save_state(c, name, value):
 
 def local_files(c):
     directory = safe_path(c.get('BACKUP_DIR', '/var/backups/unifi'))
+    if directory == directory.parent:
+        raise Failure('BACKUP_DIR may not be a filesystem root', 78)
     if not directory.is_dir():
         return []
     return sorted((p for p in directory.iterdir() if NAME.fullmatch(p.name) and p.is_file() and not p.is_symlink()), key=lambda p: p.name, reverse=True)
@@ -156,6 +170,10 @@ def metadata(path):
     path = regular(path)
     if not NAME.fullmatch(path.name) or path.stat().st_size == 0:
         raise Failure('Not a complete managed backup filename', 65)
+    try:
+        dt.datetime.strptime(path.name[16:35], '%Y-%m-%d_%H-%M-%S')
+    except ValueError:
+        raise Failure('Managed filename contains an invalid calendar timestamp', 65) from None
     doc = load(str(path) + '.json', 65536)
     b = doc.get('backup', {})
     if doc.get('schema_version') not in (1, 2) or not isinstance(b, dict):
@@ -173,7 +191,25 @@ def select(c, args):
     items = local_files(c)
     bid = getattr(args, 'backup_id', None)
     if bid:
-        items = [p for p in items if metadata(p)['backup']['id'] == bid]
+        catalog = Path(c.get('CATALOG_FILE', '/var/lib/unifi-backup/catalog.json'))
+        candidates = []
+        if catalog.exists():
+            entries = load(catalog, 64 * 1024 * 1024).get('backups', [])
+            names = [e.get('filename') for e in entries if isinstance(e, dict) and e.get('id') == bid]
+            for name in names:
+                if not isinstance(name, str) or not NAME.fullmatch(name):
+                    raise Failure('Unsafe catalog object mapping', 65)
+                candidate = Path(c.get('BACKUP_DIR', '/var/backups/unifi')) / name
+                if candidate in items:
+                    candidates.append(candidate)
+        if not candidates:
+            for path in items:
+                try:
+                    if metadata(path)['backup']['id'] == bid:
+                        candidates.append(path)
+                except Failure:
+                    continue
+        items = candidates
         if len(items) != 1:
             raise Failure('Backup ID is missing or ambiguous', 66)
     if getattr(args, 'latest', False):
@@ -184,4 +220,4 @@ def select(c, args):
 
 
 def metric(c, filename, values):
-    atomic(state_dir(c) / filename, ''.join(f'# TYPE {k} gauge\n{k} {v}\n' for k, v in values.items()), 0o644)
+    atomic(state_dir(c) / filename, ''.join(f'# TYPE {k} {"counter" if k.endswith("_total") else "gauge"}\n{k} {v}\n' for k, v in values.items()), 0o644)

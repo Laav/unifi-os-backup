@@ -3,14 +3,14 @@ import hashlib
 from pathlib import Path
 import random
 
-from core import Failure, digest, integer, iso, metadata, metric, now, save_state, state
+from core import Failure, NAME, digest, event, integer, iso, metadata, metric, now, save_state, state
 
 
 def task_key(backup_id, target):
     return hashlib.sha256((backup_id + '\0' + target).encode()).hexdigest()
 
 
-def update(c, path, target, success, error=''):
+def update(c, path, target, success, error='', increment=True):
     doc = metadata(path)
     queue = state(c, 'retry-queue.json', {'schema_version': 1, 'tasks': {}})
     key = task_key(doc['backup']['id'], target)
@@ -20,6 +20,8 @@ def update(c, path, target, success, error=''):
             job.update({'status': 'complete', 'completed_at': iso(), 'last_error': ''})
     else:
         limit = integer(c, 'RETRY_QUEUE_LIMIT', 1000, 1, 100000)
+        if job and job.get('status') == 'dead' and job.get('last_error') == 'queue_capacity_exceeded':
+            return
         if not job:
             active = sum(t['status'] == 'pending' for t in queue['tasks'].values())
             job = {'backup_id': doc['backup']['id'], 'filename': path.name, 'target': target,
@@ -31,7 +33,7 @@ def update(c, path, target, success, error=''):
                 job.update({'status': 'dead', 'last_error': 'queue_capacity_exceeded', 'updated_at': iso()})
                 save_state(c, 'retry-queue.json', queue)
                 return
-        attempts = job['attempts'] + 1
+        attempts = job['attempts'] + int(increment)
         max_attempts = integer(c, 'RETRY_MAX_ATTEMPTS', 8, 1, 100)
         maximum = integer(c, 'RETRY_MAX_INTERVAL', 86400, 1, 604800)
         base = integer(c, 'RETRY_BASE_INTERVAL', 300, 1, maximum)
@@ -46,6 +48,8 @@ def update(c, path, target, success, error=''):
     for old in terminal[:-integer(c, 'RETRY_QUEUE_LIMIT', 1000, 1, 100000)]:
         del queue['tasks'][old]
     save_state(c, 'retry-queue.json', queue)
+    if job:
+        event(c, 'retry_task_updated', 'Persistent retry state updated', target=target, status=job['status'], attempts_count=job['attempts'])
     metrics(c, queue)
 
 
@@ -61,14 +65,36 @@ def metrics(c, queue=None):
     })
 
 
-def pins(c):
-    return {task['filename'] for task in state(c, 'retry-queue.json', {'tasks': {}})['tasks'].values() if task['status'] == 'pending'}
+def pins(c, persist=True):
+    queue = state(c, 'retry-queue.json', {'tasks': {}})
+    tasks = queue.get('tasks')
+    if not isinstance(tasks, dict):
+        raise Failure('Malformed retry queue; retention refused', 65)
+    pinned = set()
+    changed = False
+    age_limit = integer(c, 'RETRY_MAX_AGE_DAYS', 7, 1, 365) * 86400
+    for task in tasks.values():
+        if not isinstance(task, dict) or not NAME.fullmatch(str(task.get('filename', ''))) or task.get('status') not in ('pending', 'dead', 'complete'):
+            raise Failure('Malformed retry task; retention refused', 65)
+        if task['status'] == 'pending':
+            if not isinstance(task.get('created_timestamp'), int):
+                raise Failure('Malformed retry timestamp; retention refused', 65)
+            if now() - task['created_timestamp'] >= age_limit:
+                task.update({'status': 'dead', 'last_error': 'retry_age_exhausted', 'updated_at': iso()})
+                changed = True
+            else:
+                pinned.add(task['filename'])
+    if changed and persist:
+        save_state(c, 'retry-queue.json', queue)
+        metrics(c, queue)
+    return pinned
 
 
 def retry(sections, force=False):
     from replication import replicate
     c = sections['main']
     results = []
+    pins(c)  # Validate every persisted filename before resolving any path.
     tasks = state(c, 'retry-queue.json', {'tasks': {}})['tasks']
     directory = Path(c.get('BACKUP_DIR', '/var/backups/unifi'))
     for job in list(tasks.values()):
@@ -82,7 +108,7 @@ def retry(sections, force=False):
                 raise Failure('Retry source identity/checksum mismatch')
             if job['target'] not in sections:
                 raise Failure('Retry target no longer configured', 78)
-            report = replicate(path, {'main': {**c, 'BACKUP_REQUIRED_TARGETS': '1'}, job['target']: sections[job['target']]})
+            report = replicate(path, sections, only_target=job['target'])
             results.append(report)
         except Failure:
             # A vanished/corrupt source cannot safely be retried. Keep an
@@ -91,6 +117,9 @@ def retry(sections, force=False):
             queue = state(c, 'retry-queue.json')
             queue['tasks'][key].update({'status': 'dead', 'last_error': 'source_or_target_unavailable', 'updated_at': iso()})
             save_state(c, 'retry-queue.json', queue)
-            results.append({'policy_satisfied': False, 'target': job['target'], 'error': 'source_or_target_unavailable'})
+            results.append({'backup_id': job['backup_id'], 'policy_satisfied': False, 'target': job['target'], 'error': 'source_or_target_unavailable'})
     metrics(c)
-    return results
+    latest = {}
+    for result in results:
+        latest[result['backup_id']] = result
+    return list(latest.values())

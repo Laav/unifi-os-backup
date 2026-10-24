@@ -53,6 +53,16 @@ backup_dir = pathlib.Path(sys.argv[1])
 catalog_path = pathlib.Path(sys.argv[2])
 status_path = pathlib.Path(sys.argv[3])
 pattern = re.compile(r"^unifi_os_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.unifi(?:\.age)?\.json$")
+def operational(name):
+    try:
+        candidate = status_path.parent / name
+        if candidate.is_symlink() or candidate.stat().st_size > 64 * 1024 * 1024:
+            return {}
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+verification_state = operational("verification.json").get("backups", {})
+replication_state = operational("replication.json").get("backups", {})
 
 entries = []
 for sidecar in sorted(backup_dir.iterdir()):
@@ -62,6 +72,8 @@ for sidecar in sorted(backup_dir.iterdir()):
         continue
     try:
         metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("backup"), dict):
+            continue
         backup = metadata["backup"]
         filename = str(backup["filename"])
         artifact = backup_dir / filename
@@ -93,7 +105,9 @@ for sidecar in sorted(backup_dir.iterdir()):
             "verification": {
                 "download_validation": str(verification.get("download_validation", "unknown")),
                 "checksum_algorithm": "SHA256",
+                "last_check": verification_state.get(filename),
             },
+            "replication": metadata.get("replication", replication_state.get(str(backup.get("id", "")))),
         })
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
         continue
@@ -120,6 +134,12 @@ document = {
     },
     "status": status,
     "backups": entries,
+    "operational": {
+        "remote_verification": operational("remote-verification.json"),
+        "anomalies": operational("anomalies.json"),
+        "configuration_diff": operational("config-diff.json"),
+        "retry_queue": operational("retry-queue.json"),
+    },
 }
 
 fd, temporary = tempfile.mkstemp(prefix=".catalog.", dir=str(catalog_path.parent))

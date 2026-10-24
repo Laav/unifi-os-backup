@@ -2,11 +2,11 @@
 import datetime as dt
 from pathlib import Path
 
-from core import Failure, integer, local_files, now, safe_path
+from core import Failure, integer, local_files, now, safe_path, state, save_state
 from retry_queue import pins
 
 
-def plan(c):
+def plan(c, dry_run=False):
     files = sorted(local_files(c), key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
     days = integer(c, 'RETENTION_DAYS', 35)
     maximum = integer(c, 'RETENTION_COUNT', 0)
@@ -34,7 +34,7 @@ def plan(c):
                 if bucket not in chosen and len(chosen) < count:
                     chosen.add(bucket)
                     protected.setdefault(path.name, []).append('gfs_' + level.lower())
-    for name in pins(c):
+    for name in pins(c, persist=not dry_run):
         protected.setdefault(name, []).append('pending_retry')
     decisions = []
     for index, path in enumerate(files):
@@ -46,7 +46,7 @@ def plan(c):
 
 
 def apply(c, dry_run=False):
-    decisions = plan(c)
+    decisions = plan(c, dry_run)
     directory = safe_path(c.get('BACKUP_DIR', '/var/backups/unifi'))
     if not dry_run:
         # Validate every selected pair before deleting anything.
@@ -61,4 +61,9 @@ def apply(c, dry_run=False):
                 p = directory / decision['filename']
                 p.unlink()
                 Path(str(p) + '.json').unlink(missing_ok=True)
+        checks = state(c, 'verification.json', {'backups': {}})
+        removed = {d['filename'] for d in decisions if d['delete']}
+        if removed and checks.get('backups'):
+            checks['backups'] = {k: v for k, v in checks['backups'].items() if k not in removed}
+            save_state(c, 'verification.json', checks)
     return {'dry_run': dry_run, 'decisions': decisions, 'removed_count': sum(d['delete'] for d in decisions)}

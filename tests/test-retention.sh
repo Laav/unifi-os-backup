@@ -6,11 +6,19 @@ tmp=$(mktemp -d)
 trap 'rm -rf -- "$tmp"' EXIT
 backup_dir="$tmp/backups"
 mkdir "$backup_dir"
+mkdir "$tmp/bin"
+if ! command -v flock >/dev/null 2>&1; then
+  cp "$root/tests/fixtures/mock-flock" "$tmp/bin/flock"
+  chmod 0755 "$tmp/bin/flock"
+fi
+export PATH="$tmp/bin:$PATH"
 config="$tmp/unifi-backup.env"
 sed -e 's#https://unifi.example.invalid:11443#https://127.0.0.1:11443#' \
     -e 's#UNIFI_PASSWORD="CHANGE_ME"#UNIFI_PASSWORD="test-only"#' \
     -e "s#BACKUP_DIR=\"/var/backups/unifi\"#BACKUP_DIR=\"$backup_dir\"#" \
     -e "s#CATALOG_FILE=\"/var/lib/unifi-backup/catalog.json\"#CATALOG_FILE=\"$backup_dir/catalog.json\"#" \
+    -e "s#STATUS_FILE=\"/var/lib/unifi-backup/status.json\"#STATUS_FILE=\"$backup_dir/status.json\"#" \
+    -e "s#LOCK_FILE=\"/run/unifi-backup/unifi-backup.lock\"#LOCK_FILE=\"$backup_dir/retention.lock\"#" \
     -e 's#RETENTION_DAYS="35"#RETENTION_DAYS="1"#' \
     "$root/config/unifi-backup.env.example" > "$config"
 chmod 0600 "$config"
@@ -36,6 +44,8 @@ sed -e 's#https://unifi.example.invalid:11443#https://127.0.0.1:11443#' \
     -e 's#UNIFI_PASSWORD="CHANGE_ME"#UNIFI_PASSWORD="test-only"#' \
     -e "s#BACKUP_DIR=\"/var/backups/unifi\"#BACKUP_DIR=\"$count_dir\"#" \
     -e "s#CATALOG_FILE=\"/var/lib/unifi-backup/catalog.json\"#CATALOG_FILE=\"$count_dir/catalog.json\"#" \
+    -e "s#STATUS_FILE=\"/var/lib/unifi-backup/status.json\"#STATUS_FILE=\"$count_dir/status.json\"#" \
+    -e "s#LOCK_FILE=\"/run/unifi-backup/unifi-backup.lock\"#LOCK_FILE=\"$count_dir/retention.lock\"#" \
     -e 's#RETENTION_DAYS="35"#RETENTION_DAYS="0"#' \
     -e 's#RETENTION_COUNT="0"#RETENTION_COUNT="3"#' \
     "$root/config/unifi-backup.env.example" > "$count_config"

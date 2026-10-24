@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 
 from core import Failure, digest, integer, iso, load, metadata, metric, now, regular, save_state, state, state_dir
 
@@ -24,10 +25,10 @@ def decrypt(path, identity, destination, maximum):
     if not shutil.which('age'):
         raise Failure('age is required for decryption', 69)
     # Identity path is public process metadata; identity contents never are.
-    env = os.environ.copy()
-    env['AGE_NO_PLUGIN'] = '1'
     with destination.open('xb') as output:
-        process = subprocess.Popen(['age', '--decrypt', '--identity', str(identity), str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+        process = subprocess.Popen(['age', '--decrypt', '--identity', str(identity), str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        deadline = threading.Timer(120, process.kill)
+        deadline.start()
         h, size = hashlib.sha256(), 0
         try:
             while True:
@@ -42,6 +43,7 @@ def decrypt(path, identity, destination, maximum):
             if process.wait(timeout=30) != 0 or size == 0:
                 raise Failure('age decryption failed; identity mismatch or damaged ciphertext', 74)
         finally:
+            deadline.cancel()
             if process.poll() is None:
                 process.kill()
             process.wait()

@@ -42,6 +42,11 @@ def inventory(c, store=None):
     return sorted(entries, key=lambda x: x['backup']['filename'], reverse=True)
 
 
+def display_entry(entry):
+    allowed = ('id', 'filename', 'size_bytes', 'sha256', 'source', 'hostname', 'created_at', 'unifi_os_version')
+    return {'backup': {key: entry['backup'].get(key) for key in allowed if key in entry['backup']}, 'origin': entry['origin']}
+
+
 def restore(c, args, store=None):
     entries = inventory(c, store)
     if args.backup_id:
@@ -51,13 +56,13 @@ def restore(c, args, store=None):
     if args.date:
         entries = [e for e in entries if e['backup']['created_at'].startswith(args.date)]
     if args.list:
-        return {'backups': entries}
+        return {'backups': [display_entry(e) for e in entries]}
     if not entries:
         raise Failure('No eligible backups found', 66)
     if not (args.latest or args.backup_id or args.date):
         raise Failure('Choose --latest, --backup-id, --date or --list', 64)
     if args.dry_run:
-        return {'dry_run': True, 'selected': entries[0], 'restore_tested': False, 'readiness': 'not_checked'}
+        return {'dry_run': True, 'selected': display_entry(entries[0]), 'restore_tested': False, 'readiness': 'not_checked'}
     skipped = []
     for entry in entries if args.latest else entries[:1]:
         name = entry['backup']['filename']
@@ -122,6 +127,6 @@ def restore(c, args, store=None):
                 return report
             except Failure as exc:
                 skipped.append({'filename': name, 'error': str(exc)})
-                if not args.latest:
+                if not args.latest or exc.code in (73, 78):
                     raise
     raise Failure('No backup passed recovery verification', 74)

@@ -203,6 +203,84 @@ class EngineCase(unittest.TestCase):
         p = self.backup()
         with self.assertRaisesRegex(Failure, 'Unsupported native UniFi'):
             extract(p, self.c)
+        companion = Path(str(p) + '.config.json')
+        atomic(companion, {'schema': 'unifi-backup-config/v1', 'backup_sha256': hashlib.sha256(p.read_bytes()).hexdigest(), 'categories': old['categories']})
+        self.assertIn('wifi', extract(p, self.c)['categories'])
+        exported = json.loads(companion.read_text())
+        exported['backup_sha256'] = '0' * 64
+        atomic(companion, exported)
+        with self.assertRaisesRegex(Failure, 'not bound'):
+            extract(p, self.c)
+
+    def test_expired_retry_is_explicitly_dead_before_retention(self):
+        p = self.backup()
+        replicate(p, {'main': self.c, 'offline': {'TARGET_TYPE': 'filesystem', 'FILESYSTEM_PATH': '/absent'}})
+        queue = state(self.c, 'retry-queue.json')
+        for job in queue['tasks'].values():
+            job['created_timestamp'] = 1
+        save_state(self.c, 'retry-queue.json', queue)
+        self.assertNotIn(p.name, pins(self.c))
+        self.assertEqual(next(iter(state(self.c, 'retry-queue.json')['tasks'].values()))['last_error'], 'retry_age_exhausted')
+
+    def test_restore_disk_space_and_unknown_metadata(self):
+        p = self.backup()
+        with patch('recovery.shutil.disk_usage', return_value=Namespace(free=0)):
+            with self.assertRaisesRegex(Failure, 'Insufficient free space'):
+                restore(self.c, self.restore_args())
+        self.assertFalse(list((self.root / 'restore').glob('*.unifi')))
+        atomic(str(p) + '.json', {'schema_version': 999, 'backup': {}})
+        self.assertFalse(verify(p, self.c)['success'])
+
+    def test_anomalies_growth_duration_identical_and_outliers(self):
+        rows = [{'id': str(i), 'controller': 'same', 'size': 10000, 'hash': 'a', 'timings': {'download_seconds': 10}} for i in range(10)]
+        rows[0]['size'] = 1000000  # one historical outlier does not shift median
+        self.assertEqual(evaluate(rows, self.c)['status'], 'normal')
+        rows[-1]['size'] = 40000
+        rows[-1]['timings']['download_seconds'] = 100
+        self.c['ANOMALY_IDENTICAL_COUNT'] = '3'
+        kinds = {r['kind'] for r in evaluate(rows, self.c)['findings']}
+        self.assertTrue({'size_deviation', 'duration_deviation', 'identical_plaintext_hashes'} <= kinds)
+
+    def test_retry_quorum_tracks_other_pending_targets(self):
+        p = self.backup()
+        disk, other = self.filesystem(), self.filesystem('other')
+        a = Path(disk['FILESYSTEM_PATH']) / '.unifi-backup-target'
+        b = Path(other['FILESYSTEM_PATH']) / '.unifi-backup-target'
+        a.unlink(); b.unlink()
+        self.c['BACKUP_REQUIRED_TARGETS'] = '2'
+        sections = {'main': self.c, 'disk': disk, 'other': other}
+        self.assertFalse(replicate(p, sections)['policy_satisfied'])
+        a.write_text('disk')
+        report = replicate(p, sections, only_target='disk')
+        self.assertFalse(report['policy_satisfied'])
+        self.assertEqual(report['replication'], 'partial')
+
+    def test_interrupted_restore_leaves_no_final_artifact(self):
+        p = self.backup()
+        config = self.filesystem()
+        replicate(p, {'main': self.c, 'disk': config})
+        store = Store('disk', config)
+        download = store.download
+        def interrupted(name, output):
+            if name.endswith('.json'):
+                return download(name, output)
+            output.write_bytes(b'partial-untrusted-download')
+            raise Failure('Storage transport interrupted', 69)
+        with patch.object(store, 'download', side_effect=interrupted):
+            with self.assertRaises(Failure):
+                restore(self.c, self.restore_args(), store)
+        self.assertFalse((self.root / 'restore').exists())
+        self.assertFalse(list(self.root.glob('.recovery.*')))
+
+    def test_interrupted_upload_keeps_persisted_retry_intent(self):
+        p = self.backup()
+        config = self.filesystem()
+        sections = {'main': self.c, 'disk': config}
+        with patch('replication.Store.upload', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                replicate(p, sections)
+        self.assertIn(p.name, pins(self.c))
+        self.assertTrue(retry(sections, force=True)[0]['policy_satisfied'])
 
 
 if __name__ == '__main__':

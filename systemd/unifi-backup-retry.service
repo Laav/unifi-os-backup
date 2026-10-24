@@ -1,0 +1,29 @@
+[Unit]
+Description=Retry pending UniFi backup replication
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/unifi-backup-retry --scheduled
+RuntimeDirectory=unifi-backup
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+StateDirectory=unifi-backup
+StateDirectoryMode=0755
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/unifi /var/lib/unifi-backup /run/unifi-backup
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+TimeoutStartSec=2h

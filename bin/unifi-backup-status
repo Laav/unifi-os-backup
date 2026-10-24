@@ -92,11 +92,36 @@ elif age >= warning_seconds:
 else:
     code, label, message = 0, "OK", f"last successful backup is {age} seconds old"
 
+def operation_state(name):
+    candidate = path.parent / name
+    try:
+        if candidate.is_symlink() or candidate.stat().st_size > 64 * 1024 * 1024:
+            return {}
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+verification = operation_state("verification.json")
+queue = operation_state("retry-queue.json")
+remote_verification = operation_state("remote-verification.json")
+anomalies = operation_state("anomalies.json")
+checks = verification.get("backups", {})
+if any(not value.get("success", False) for value in checks.values()):
+    code, label, message = 2, "CRITICAL", "a recorded local backup integrity check failed"
+elif code == 0 and any(t.get("status") in ("pending", "dead") for t in queue.get("tasks", {}).values()):
+    code, label, message = 1, "WARNING", "replication has pending or dead-letter tasks"
+elif code == 0 and any(not r.get("success", False) for r in remote_verification.get("results", [])):
+    code, label, message = 1, "WARNING", "a remote verification check failed"
+elif code == 0 and any(r.get("findings") for r in anomalies.get("results", [])[-1:]):
+    code, label, message = 1, "WARNING", "backup anomaly analysis reported a warning"
+
 if fmt == "snmp":
     print(code)
     raise SystemExit(0)
 if fmt == "json":
     result = dict(data)
+    result["operations"] = {"verification": verification, "remote_verification": remote_verification,
+                            "retry_tasks": queue.get("tasks", {}), "anomalies": anomalies}
     result["monitoring"] = {
         "status": label,
         "status_code": code,

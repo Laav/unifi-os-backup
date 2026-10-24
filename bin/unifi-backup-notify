@@ -75,7 +75,7 @@ WEBHOOK_CONFIG_FILE=${WEBHOOK_CONFIG_OVERRIDE:-$WEBHOOK_CONFIG_FILE}
 STATUS_FILE=${STATUS_FILE_OVERRIDE:-$STATUS_FILE}
 
 [[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 78
-[[ $EVENT =~ ^(success|failure|recovery|stale_warning|stale_critical|stale_recovery)$ ]] || die "Unsupported notification event" 64
+[[ $EVENT =~ ^(success|failure|warning|recovery|stale_warning|stale_critical|stale_recovery)$ ]] || die "Unsupported notification event" 64
 ub_is_nonnegative_int "$EXIT_CODE" || die "--exit-code must be a non-negative integer" 64
 ub_is_bool "$ENABLE_NTFY" || die "ENABLE_NTFY must be true or false" 78
 ub_is_bool "$ENABLE_WEBHOOK" || die "ENABLE_WEBHOOK must be true or false" 78
@@ -139,6 +139,7 @@ PY
     success) title="UniFi backup successful - $host_name"; priority="default" ;;
     recovery|stale_recovery) title="UniFi backup recovered - $host_name"; priority="high" ;;
     failure) title="UniFi backup failed - $host_name"; priority="high" ;;
+    warning) title="UniFi backup warning - $host_name"; priority="high" ;;
     *) title="UniFi backup stale - $host_name"; priority="high" ;;
   esac
   local -a args=(--silent --show-error --connect-timeout 15 --max-time 60 --request POST
@@ -170,11 +171,13 @@ send_webhook() {
 
   local payload="$tmp_dir/webhook-payload" headers="$tmp_dir/webhook-headers" curl_config="$tmp_dir/webhook-curl"
   local response="$tmp_dir/webhook-response" secret_input="$tmp_dir/webhook-secrets" http_status rc
-  printf '%s\0%s' "$WEBHOOK_BEARER_TOKEN" "$WEBHOOK_HMAC_SECRET" > "$secret_input"
-  python3 - "$WEBHOOK_URL" "$curl_config" "$payload" "$headers" "$secret_input" "$EVENT" "$MESSAGE" "$EXIT_CODE" "$host_name" "$STATUS_FILE" "$METADATA_FILE" "$UNIFI_URL" <<'PY'
+  printf '%s\0%s\0%s' "$WEBHOOK_URL" "$WEBHOOK_BEARER_TOKEN" "$WEBHOOK_HMAC_SECRET" > "$secret_input"
+  python3 - "$curl_config" "$payload" "$headers" "$secret_input" "$EVENT" "$MESSAGE" "$EXIT_CODE" "$host_name" "$STATUS_FILE" "$METADATA_FILE" "$UNIFI_URL" <<'PY'
 import datetime, hashlib, hmac, json, pathlib, sys, urllib.parse, uuid
-(url, curl_path, payload_path, headers_path, secrets_path, event, message,
+(curl_path, payload_path, headers_path, secrets_path, event, message,
  exit_code, hostname, status_path, metadata_path, controller) = sys.argv[1:]
+url_bytes, token, secret = pathlib.Path(secrets_path).read_bytes().split(b"\0", 2)
+url = url_bytes.decode()
 parts = urllib.parse.urlsplit(url)
 if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment or any(c.isspace() for c in url):
     raise SystemExit("WEBHOOK_URL must be an HTTPS URL without credentials, fragment, or whitespace")
@@ -191,7 +194,7 @@ def load_optional(path, limit):
 status = load_optional(status_path, 1048576)
 metadata = load_optional(metadata_path, 65536)
 mapping = {"success": "success", "recovery": "success", "stale_recovery": "success",
-           "failure": "failed", "stale_warning": "warning", "stale_critical": "critical"}
+           "failure": "failed", "warning": "warning", "stale_warning": "warning", "stale_critical": "critical"}
 document = {
     "schema_version": 1,
     "delivery_id": str(uuid.uuid4()),
@@ -212,7 +215,6 @@ body = json.dumps(document, separators=(",", ":"), ensure_ascii=True).encode()
 pathlib.Path(payload_path).write_bytes(body)
 escaped = url.replace("\\", "\\\\").replace('"', '\\"')
 pathlib.Path(curl_path).write_text(f'url = "{escaped}"\n', encoding="utf-8")
-token, secret = pathlib.Path(secrets_path).read_bytes().split(b"\0", 1)
 lines = []
 if token: lines.append("Authorization: Bearer " + token.decode())
 if secret: lines.append("X-UniFi-Backup-Signature: sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest())

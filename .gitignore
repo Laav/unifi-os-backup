@@ -22,6 +22,16 @@ age-identity*
 status.json
 catalog.json
 monitor-state.json
+verification.json
+replication.json
+remote-verification.json
+retry-queue.json
+history.json
+anomalies.json
+config-diff.json
+*.restore.json
+*.unifi.config.json
+*.unifi.age.config.json
 *.prom
 *.tmp
 *.part

@@ -10,6 +10,23 @@ systemctl disable --now unifi-backup.timer >/dev/null 2>&1 || true
 systemctl disable --now unifi-backup-monitor.timer >/dev/null 2>&1 || true
 systemctl stop unifi-backup.service >/dev/null 2>&1 || true
 systemctl stop unifi-backup-monitor.service >/dev/null 2>&1 || true
+for extra in verify remote-verify retry; do
+  systemctl disable --now "unifi-backup-$extra.timer" >/dev/null 2>&1 || true
+  systemctl stop "unifi-backup-$extra.service" >/dev/null 2>&1 || true
+  rm -f -- "/etc/systemd/system/unifi-backup-$extra.service" "/etc/systemd/system/unifi-backup-$extra.timer"
+done
+for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff; do
+  rm -f -- "/usr/local/sbin/unifi-backup-$helper"
+done
+rm -f -- /usr/local/lib/unifi-backup/unifi-backup-runtime.sh
+for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli; do
+  rm -f -- "/usr/local/lib/unifi-backup/ub/$module.py"
+done
+for cached in /usr/local/lib/unifi-backup/ub/__pycache__/*.pyc; do
+  [[ ! -f $cached ]] || rm -f -- "$cached"
+done
+rmdir /usr/local/lib/unifi-backup/ub/__pycache__ >/dev/null 2>&1 || true
+rmdir /usr/local/lib/unifi-backup/ub >/dev/null 2>&1 || true
 rm -f -- /usr/local/sbin/unifi-backup /usr/local/sbin/unifi-mail-backup /usr/local/sbin/unifi-backup-check
 rm -f -- /usr/local/sbin/unifi-backup-upload /usr/local/sbin/unifi-backup-notify /usr/local/sbin/unifi-backup-status
 rm -f -- /usr/local/sbin/unifi-backup-monitor /usr/local/sbin/unifi-backup-catalog

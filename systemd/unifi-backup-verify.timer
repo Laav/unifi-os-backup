@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule recheck unifi backup integrity
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

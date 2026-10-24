@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule retry pending unifi backup replication
+
+[Timer]
+OnCalendar=*-*-* *:00/15:00
+Persistent=true
+RandomizedDelaySec=2m
+
+[Install]
+WantedBy=timers.target

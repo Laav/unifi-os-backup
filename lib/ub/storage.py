@@ -100,6 +100,13 @@ class Store:
             raise Failure('Unsafe or unmanaged object name', 65)
         return name
 
+    def filesystem_ready(self):
+        safe_path(self.root)
+        if boolean(self.c, 'FILESYSTEM_REQUIRE_MOUNT', True) and not os.path.ismount(self.root):
+            raise Failure('Filesystem target disappeared or is not mounted', 69)
+        if regular(self.root / '.unifi-backup-target').read_text(encoding='utf-8').strip() != self.id:
+            raise Failure('Filesystem target marker changed', 78)
+
     def location(self, name='', query=None, bucket=False):
         query = query or {}
         key = '/'.join(x for x in (self.prefix, name) if x)
@@ -155,6 +162,8 @@ class Store:
                 raise Failure('Invalid storage URL', 78)
             config.write_text(f'url = "{escaped}"\n', encoding='utf-8')
             auth.write_text(''.join(f'{k}: {v}\n' for k, v in headers.items()), encoding='utf-8')
+            config.chmod(0o600)
+            auth.chmod(0o600)
             args = ['curl', '-q', '--silent', '--show-error', '--connect-timeout', str(self.connect), '--max-time', str(self.timeout),
                     '--proto', '=https', '--config', str(config), '--header', '@' + str(auth), '--dump-header', str(response_headers),
                     '--output', str(output or response), '--write-out', '%{http_code}']
@@ -193,6 +202,7 @@ class Store:
     def head(self, name):
         self.object_name(name)
         if self.kind == 'filesystem':
+            self.filesystem_ready()
             p = regular(self.root / name)
             return {'size': p.stat().st_size, 'sha256': digest(p), 'headers': {}}
         h, _ = self.request('HEAD', name)
@@ -209,6 +219,7 @@ class Store:
         if output.exists():
             raise Failure('Download output already exists', 73)
         if self.kind == 'filesystem':
+            self.filesystem_ready()
             source = regular(self.root / name)
             if source.stat().st_size > self.maximum:
                 raise Failure('Object exceeds download limit', 74)
@@ -223,6 +234,7 @@ class Store:
         name = self.object_name(source.name)
         checksum = digest(source)
         if self.kind == 'filesystem':
+            self.filesystem_ready()
             target = safe_path(self.root / name)
             if target.exists():
                 if target.is_file() and digest(target) == checksum:
@@ -269,6 +281,7 @@ class Store:
 
     def listing(self):
         if self.kind == 'filesystem':
+            self.filesystem_ready()
             return sorted(p.name for p in self.root.iterdir() if p.is_file() and not p.is_symlink() and OBJECT.fullmatch(p.name))
         objects, marker = [], ''
         for _ in range(1000):

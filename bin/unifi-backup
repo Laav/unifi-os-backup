@@ -3,11 +3,12 @@ set -Eeuo pipefail
 umask 077
 
 PROGRAM="unifi-backup"
-VERSION="1.2.0"
+VERSION="1.3.0"
 CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
 MODE="backup"
 
 RUN_ERROR=""
+RUN_FAILURE_CATEGORY="none"
 RUN_TRACKING=false
 RUN_STARTED_TIMESTAMP=$(date +%s)
 RUN_ID=""
@@ -23,6 +24,11 @@ ENCRYPTION_STATUS="disabled"
 REMOTE_STATUS="not_attempted"
 REMOTE_METADATA_STATUS="not_attempted"
 EMAIL_STATUS="not_attempted"
+LOCAL_STATUS="not_created"
+replication_rc=0
+AUTH_DURATION=0
+DOWNLOAD_DURATION=0
+ENCRYPT_DURATION=0
 
 usage() {
   cat <<'EOF'
@@ -57,6 +63,12 @@ warn_event() { ub_warn "$@"; }
 die() {
   local message=$1 code=${2:-1} event=${3:-fatal_error}
   RUN_ERROR=$message
+  case "$event" in
+    authentication*) RUN_FAILURE_CATEGORY=authentication ;;
+    backup_download*) RUN_FAILURE_CATEGORY=download ;;
+    remote_*|replication*) RUN_FAILURE_CATEGORY=replication ;;
+    *) RUN_FAILURE_CATEGORY=other ;;
+  esac
   ub_error "$event" "$message" exit_code "$code"
   exit "$code"
 }
@@ -124,6 +136,29 @@ source "$CONFIG_FILE"
 : "${NOTIFY_ON_FAILURE:=true}"
 : "${NOTIFY_ON_RECOVERY:=true}"
 : "${LOCK_FILE:=/run/unifi-backup/unifi-backup.lock}"
+: "${BACKUP_TARGETS:=}"
+: "${BACKUP_REQUIRED_TARGETS:=0}"
+: "${RETENTION_MODE:=legacy}"
+: "${VERIFY_ENABLED:=false}"
+: "${ANOMALY_ENABLED:=false}"
+: "${DIFF_ENABLED:=false}"
+
+operation() {
+  local command=$1
+  shift
+  local helper="$script_dir/unifi-backup-$command"
+  [[ -x $helper ]] || helper="/usr/local/sbin/unifi-backup-$command"
+  UNIFI_BACKUP_LOCK_HELD=1 "$helper" --config "$CONFIG_FILE" "$@"
+}
+
+ub_lib="$script_dir/../lib"
+# Runtime library consumes this directory for catalog and notifier helpers.
+# shellcheck disable=SC2034
+ub_dir=$script_dir
+[[ -f $ub_lib/unifi-backup-runtime.sh ]] || ub_lib=/usr/local/lib/unifi-backup
+# shellcheck source=../lib/unifi-backup-runtime.sh
+# shellcheck disable=SC1091
+source "$ub_lib/unifi-backup-runtime.sh"
 
 validate_config() {
   [[ $LOG_FORMAT == "text" || $LOG_FORMAT == "json" ]] || die "LOG_FORMAT must be text or json" 78 configuration_error
@@ -177,7 +212,7 @@ validate_config() {
     die "LOCK_FILE must be directly below /run/unifi-backup or BACKUP_DIR" 78 configuration_error
   fi
   [[ $ENABLE_EMAIL == "false" ]] || check_secret_file "$GRAPH_CONFIG_FILE"
-  [[ $REMOTE_STORAGE_TYPE == "none" ]] || check_secret_file "$STORAGE_CONFIG_FILE"
+  [[ -n $BACKUP_TARGETS || $REMOTE_STORAGE_TYPE == "none" ]] || check_secret_file "$STORAGE_CONFIG_FILE"
   [[ $ENABLE_NTFY == "false" ]] || check_secret_file "$NTFY_CONFIG_FILE"
   [[ $ENABLE_WEBHOOK == "false" ]] || check_secret_file "$WEBHOOK_CONFIG_FILE"
   if [[ $ENCRYPTION_TYPE == "age" ]]; then
@@ -190,6 +225,7 @@ validate_config() {
 }
 
 validate_config
+ub_runtime validate --config "$CONFIG_FILE" || die "Invalid extended configuration" 78 configuration_error
 for command_name in curl python3 stat date; do require_command "$command_name"; done
 [[ $ENCRYPTION_TYPE == "none" ]] || require_command age
 
@@ -203,47 +239,17 @@ mkdir -p -- "$BACKUP_DIR"
 chmod 0700 "$BACKUP_DIR"
 [[ -d $BACKUP_DIR && -w $BACKUP_DIR ]] || die "BACKUP_DIR is not a writable directory: $BACKUP_DIR" 73 local_storage_error
 
-# Keep descriptor 9 valid before retention-only mode as well. The retention
-# selector closes it in its child so a normal backup run never leaks the flock.
-exec 9>/dev/null
+# All mutable operations, including retention-only mode, use the same lock.
+require_command flock
+mkdir -p -- "${LOCK_FILE%/*}"
+chmod 0700 "${LOCK_FILE%/*}"
+[[ ! -L $LOCK_FILE && ! -L ${LOCK_FILE%/*} ]] || die "Unsafe lock path" 73 local_storage_error
+exec 9>"$LOCK_FILE"
+flock -n 9 || die "Another backup run is already active" 75 lock_active
 
 run_retention() {
-  local candidate_name candidate reason sidecar deleted=0
-  [[ -n $BACKUP_DIR && $BACKUP_DIR == /* && $BACKUP_DIR != "/" && -d $BACKUP_DIR ]] || die "Unsafe BACKUP_DIR; retention refused" 78 retention_error
-  ub_is_nonnegative_int "$RETENTION_DAYS" || die "Unsafe RETENTION_DAYS; retention refused" 78 retention_error
-  ub_is_nonnegative_int "$RETENTION_COUNT" || die "Unsafe RETENTION_COUNT; retention refused" 78 retention_error
-  ub_is_nonnegative_int "$RETENTION_MIN_COUNT" || die "Unsafe RETENTION_MIN_COUNT; retention refused" 78 retention_error
-
-  while IFS= read -r -d '' candidate_name && IFS= read -r -d '' reason; do
-    [[ $candidate_name =~ ^unifi_os_backup_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.unifi(\.age)?$ ]] || continue
-    candidate="$BACKUP_DIR/$candidate_name"
-    log_event retention_delete "Removing backup under retention policy" file "$candidate" reason "$reason"
-    rm -f -- "$candidate" || die "Failed to remove retained backup: $candidate" 74 retention_error
-    sidecar="$candidate.json"
-    [[ ! -e $sidecar || -f $sidecar ]] || die "Refusing unexpected metadata path: $sidecar" 74 retention_error
-    rm -f -- "$sidecar" || die "Failed to remove backup metadata: $sidecar" 74 retention_error
-    ((deleted+=1))
-  done < <(python3 - "$BACKUP_DIR" "$RETENTION_DAYS" "$RETENTION_COUNT" "$RETENTION_MIN_COUNT" 9>&- <<'PY'
-import pathlib, re, sys, time
-
-directory = pathlib.Path(sys.argv[1])
-days, maximum, minimum = map(int, sys.argv[2:])
-pattern = re.compile(r"^unifi_os_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.unifi(?:\.age)?$")
-items = sorted((p for p in directory.iterdir() if p.is_file() and not p.is_symlink() and pattern.fullmatch(p.name)), key=lambda p: p.stat().st_mtime, reverse=True)
-now = time.time()
-for index, path in enumerate(items):
-    if index < minimum:
-        continue
-    reasons = []
-    if days and now - path.stat().st_mtime > days * 86400:
-        reasons.append("age")
-    if maximum and index >= maximum:
-        reasons.append("count")
-    if reasons:
-        sys.stdout.buffer.write(path.name.encode() + b"\0" + "+".join(reasons).encode() + b"\0")
-PY
-  )
-  log_event retention_complete "Retention complete" removed_count "$deleted" retention_days "$RETENTION_DAYS" retention_count "$RETENTION_COUNT" minimum_count "$RETENTION_MIN_COUNT"
+  operation retention --quiet || die "Retention failed safely" 74 retention_error
+  log_event retention_complete "Retention complete" retention_days "$RETENTION_DAYS" retention_count "$RETENTION_COUNT" minimum_count "$RETENTION_MIN_COUNT"
 }
 
 rebuild_catalog() {
@@ -260,14 +266,7 @@ if [[ $MODE == "retention" ]]; then
   exit 0
 fi
 
-for command_name in flock sha256sum hostname mktemp; do require_command "$command_name"; done
-mkdir -p -- "${LOCK_FILE%/*}"
-chmod 0700 "${LOCK_FILE%/*}"
-[[ ! -L $LOCK_FILE ]] || die "Refusing symbolic-link lock file: $LOCK_FILE" 73 local_storage_error
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-  die "Another backup run is already active (lock: $LOCK_FILE)" 75 lock_active
-fi
+for command_name in sha256sum hostname mktemp; do require_command "$command_name"; done
 
 tmp_cookie=""
 tmp_login_headers=""
@@ -288,12 +287,12 @@ write_run_status() {
   [[ ! -L $status_dir ]] || return 1
   [[ $status_dir == "/var/lib/unifi-backup" ]] && chmod 0755 "$status_dir"
   python3 - "$STATUS_FILE" "$RUN_ID" "$RUN_STARTED_TIMESTAMP" "$completed_timestamp" "$duration" "$rc" "$state_message" \
-    "$final_backup" "$backup_size" "$sha256" "$REMOTE_STATUS" "$REMOTE_METADATA_STATUS" "$EMAIL_STATUS" "$ENCRYPTION_TYPE" "$STALE_WARNING_HOURS" <<'PY'
+    "$final_backup" "$backup_size" "$sha256" "$REMOTE_STATUS" "$REMOTE_METADATA_STATUS" "$EMAIL_STATUS" "$ENCRYPTION_TYPE" "$STALE_WARNING_HOURS" "$LOCAL_STATUS" <<'PY'
 import datetime, json, os, pathlib, sys, tempfile
 
 (path_s, run_id, started, completed, duration, exit_code, message, backup_file,
  size, sha256, remote_status, remote_metadata_status, email_status, encryption_type,
- stale_warning_hours) = sys.argv[1:]
+ stale_warning_hours, local_status) = sys.argv[1:]
 path = pathlib.Path(path_s)
 try:
     previous = json.loads(path.read_text(encoding="utf-8"))
@@ -316,9 +315,10 @@ run = {
     "remote_metadata_status": remote_metadata_status,
     "email_status": email_status,
     "encryption_type": encryption_type,
+    "local_backup_status": local_status,
 }
 result = {"schema_version": 1, "last_run": run, "last_success": previous.get("last_success")}
-if status == "success":
+if local_status == "success":
     result["last_success"] = {
         "completed_at": iso(completed),
         "completed_timestamp": int(completed),
@@ -448,6 +448,8 @@ cleanup() {
     if ! write_run_status "$rc" "$state_message"; then
       warn_event monitoring_state_failed "Could not update monitoring status file" status_file "$STATUS_FILE"
     fi
+    UNIFI_BACKUP_LOCK_HELD=1 ub_runtime history --config "$CONFIG_FILE" --run-id "$RUN_ID" --exit-code "$rc" \
+      --duration "$(( $(date +%s) - RUN_STARTED_TIMESTAMP ))" --failure-category "$RUN_FAILURE_CATEGORY" --quiet >/dev/null || true
     send_run_notification "$rc"
   fi
   exit "$rc"
@@ -529,7 +531,9 @@ authenticate() {
   log_event authentication_succeeded "Authentication succeeded"
 }
 
+auth_started=$(date +%s)
 authenticate
+AUTH_DURATION=$(( $(date +%s) - auth_started ))
 if [[ $MODE == "check" ]]; then
   log_event controlplane_check_succeeded "Controlplane login check succeeded; no backup was requested"
   exit 0
@@ -576,6 +580,7 @@ PY
 }
 
 DOWNLOAD_ERROR=""
+download_started=$(date +%s)
 download_succeeded=false
 max_attempts=$((BACKUP_DOWNLOAD_RETRIES + 1))
 for ((attempt=1; attempt<=max_attempts; attempt++)); do
@@ -611,11 +616,13 @@ for ((attempt=1; attempt<=max_attempts; attempt++)); do
   fi
 done
 [[ $download_succeeded == "true" ]] || die "$DOWNLOAD_ERROR" 74 backup_download_failed
+DOWNLOAD_DURATION=$(( $(date +%s) - download_started ))
 
 chmod 0600 "$tmp_backup"
 original_filename=${final_backup##*/}
 plaintext_size=$(stat -c '%s' "$tmp_backup")
 plaintext_sha256=$(sha256sum "$tmp_backup" | awk '{print $1}')
+encrypt_started=$(date +%s)
 if [[ $ENCRYPTION_TYPE == "age" ]]; then
   final_backup+=".age"
   [[ ! -e $final_backup ]] || die "Refusing to overwrite existing encrypted backup: $final_backup" 73 local_storage_error
@@ -645,6 +652,7 @@ else
   tmp_backup=""
 fi
 backup_size=$(stat -c '%s' "$final_backup")
+ENCRYPT_DURATION=$(( $(date +%s) - encrypt_started ))
 sha256=$(sha256sum "$final_backup" | awk '{print $1}')
 host_name=$(hostname -f 2>/dev/null || hostname)
 metadata_file="$final_backup.json"
@@ -652,12 +660,14 @@ metadata_file="$final_backup.json"
 write_metadata() {
   python3 - "$final_backup" "$metadata_file" "$RUN_ID" "$host_name" "$UNIFI_URL" "$backup_size" "$sha256" "$VERSION" \
     "$REMOTE_STORAGE_TYPE" "$REMOTE_STATUS" "$REMOTE_METADATA_STATUS" "$ENABLE_EMAIL" "$EMAIL_STATUS" \
-    "$ENCRYPTION_TYPE" "$ENCRYPTION_STATUS" "$original_filename" "$plaintext_size" "$plaintext_sha256" <<'PY'
+    "$ENCRYPTION_TYPE" "$ENCRYPTION_STATUS" "$original_filename" "$plaintext_size" "$plaintext_sha256" \
+    "$AUTH_DURATION" "$DOWNLOAD_DURATION" "$ENCRYPT_DURATION" "$RUN_STARTED_TIMESTAMP" <<'PY'
 import datetime, json, os, pathlib, sys, tempfile
 
 (source_s, output_s, run_id, host, server, size, sha256, version, remote_type,
  remote_status, remote_metadata_status, email_enabled, email_status, encryption_type,
- encryption_status, original_filename, plaintext_size, plaintext_sha256) = sys.argv[1:]
+ encryption_status, original_filename, plaintext_size, plaintext_sha256,
+ auth_duration, download_duration, encrypt_duration, started) = sys.argv[1:]
 source, output = pathlib.Path(source_s), pathlib.Path(output_s)
 created = datetime.datetime.fromtimestamp(source.stat().st_mtime, datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 record = {
@@ -682,9 +692,18 @@ record = {
         "plaintext_sha256": plaintext_sha256,
     },
     "verification": {"download_validation": "success", "checksum_algorithm": "SHA256"},
+    "timings": {"authentication_seconds": int(auth_duration), "download_seconds": int(download_duration),
+                "encryption_seconds": int(encrypt_duration), "total_seconds": max(0, int(datetime.datetime.now().timestamp()) - int(started))},
     "remote_storage": {"type": remote_type, "backup_status": remote_status, "metadata_status": remote_metadata_status},
     "email": {"enabled": email_enabled == "true", "status": email_status},
 }
+if output.is_file():
+    try:
+        previous = json.loads(output.read_text(encoding="utf-8"))
+        if previous.get("backup", {}).get("id") == run_id and "replication" in previous:
+            record["replication"] = previous["replication"]
+    except (OSError, ValueError):
+        pass
 fd, temporary = tempfile.mkstemp(prefix=".metadata.", dir=str(output.parent))
 try:
     with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -701,13 +720,25 @@ PY
 }
 
 write_metadata || die "Could not write backup metadata" 73 metadata_error
+LOCAL_STATUS="success"
 log_event backup_succeeded "Backup successful" file "$final_backup" size_bytes "$backup_size" sha256 "$sha256" metadata_file "$metadata_file" backup_id "$RUN_ID"
 log_event backup_file "File: $final_backup" file "$final_backup"
 log_event backup_size "Size: $backup_size bytes" size_bytes "$backup_size"
 log_event backup_checksum "SHA256: $sha256" sha256 "$sha256"
 log_event backup_metadata "Metadata: $metadata_file" metadata_file "$metadata_file" backup_id "$RUN_ID"
 
-if [[ $REMOTE_STORAGE_TYPE != "none" ]]; then
+if [[ -n $BACKUP_TARGETS ]]; then
+  if operation replicate --file "$final_backup" --quiet; then
+    REMOTE_STATUS="success"
+    REMOTE_METADATA_STATUS="success"
+  else
+    replication_rc=$?
+    REMOTE_STATUS="failure"
+    UNIFI_BACKUP_LOCK_HELD=1 ub_runtime enqueue --config "$CONFIG_FILE" --file "$final_backup" --quiet || true
+    warn_event replication_policy_failed "Local backup succeeded; remote replication policy is not yet satisfied" exit_code "$replication_rc"
+  fi
+  write_metadata || die "Could not update replication metadata" 73 metadata_error
+elif [[ $REMOTE_STORAGE_TYPE != "none" ]]; then
   uploader="/usr/local/sbin/unifi-backup-upload"
   [[ -x $uploader ]] || uploader="$script_dir/unifi-backup-upload"
   [[ -x $uploader ]] || die "Remote storage is enabled but unifi-backup-upload is not installed" 69 remote_upload_failed
@@ -746,7 +777,7 @@ if [[ $ENABLE_EMAIL == "true" ]]; then
   write_metadata || die "Could not update backup metadata after email delivery" 73 metadata_error
 fi
 
-if [[ $REMOTE_STATUS == "success" ]]; then
+if [[ -z $BACKUP_TARGETS && $REMOTE_STATUS == "success" ]]; then
   # Write the expected final state before upload so the remote sidecar is
   # self-consistent. On failure the local copy is corrected to "failure".
   REMOTE_METADATA_STATUS="success"
@@ -756,6 +787,7 @@ if [[ $REMOTE_STATUS == "success" ]]; then
   else
     upload_rc=$?
     REMOTE_METADATA_STATUS="failure"
+    UNIFI_BACKUP_LOCK_HELD=1 ub_runtime enqueue --config "$CONFIG_FILE" --file "$final_backup" --quiet || true
     write_metadata || true
     if [[ $REMOTE_UPLOAD_REQUIRED == "true" ]]; then
       die "Remote backup exists, but required metadata upload failed (exit $upload_rc); local files retained" 75 remote_upload_failed
@@ -765,10 +797,20 @@ if [[ $REMOTE_STATUS == "success" ]]; then
   write_metadata || die "Could not finalize backup metadata" 73 metadata_error
 fi
 
+if [[ $VERIFY_ENABLED == true ]]; then
+  operation verify --file "$final_backup" --quiet || die "Post-creation integrity verification failed" 74 verification_failed
+fi
+if [[ $ANOMALY_ENABLED == true ]]; then
+  operation analyze --latest --quiet --scheduled || warn_event anomaly_detected "Anomaly analysis reported a warning; backup integrity is unchanged"
+fi
+if [[ $DIFF_ENABLED == true ]]; then
+  operation diff --latest-two --quiet || warn_event config_diff_unavailable "Automatic configuration diff is unavailable; backup creation is unchanged"
+fi
 run_retention
 # Publish the successful run state before catalog generation so the catalog's
 # status snapshot describes the backup it inventories. The EXIT trap writes the
 # same state again, or corrects it if catalog generation itself fails.
 write_run_status 0 "Backup completed successfully" || die "Could not update monitoring status before catalog generation" 73 monitoring_error
 rebuild_catalog
+(( replication_rc == 0 )) || die "Local backup is valid; required replication remains pending" 75 replication_policy_failed
 exit 0
