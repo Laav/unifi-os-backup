@@ -19,6 +19,8 @@ jobs:
       - name: Install static analysis
         run: apt-get update && apt-get install -y git bash curl python3 coreutils findutils util-linux shellcheck systemd age
       - uses: actions/checkout@v5
+      - name: Trust the checked-out workspace in the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Bash tests
         run: bash tests/run.sh
       - name: Engine and real age tests
