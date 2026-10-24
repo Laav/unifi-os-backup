@@ -8,6 +8,7 @@ import sys
 
 from core import Failure, select
 from verify import record, verify
+from replication import replicate
 
 
 def configuration():
@@ -42,6 +43,7 @@ def parser(command):
     p.add_argument('--backup-id')
     p.add_argument('--decrypt-check', action='store_true')
     p.add_argument('--identity')
+    p.add_argument('--target')
     return p
 
 
@@ -51,6 +53,10 @@ def main():
     args = parser(command).parse_args(sys.argv[2:])
     sections = configuration()
     c = sections['main']
+    if args.target:
+        if args.target not in sections or args.target == 'main':
+            raise Failure('Unknown storage target', 78)
+        sections = {'main': c, args.target: sections[args.target]}
     if args.decrypt_check and not args.identity:
         raise Failure('--decrypt-check requires a protected --identity file', 78)
     if command == 'verify':
@@ -65,6 +71,11 @@ def main():
                 for item in results:
                     print(f"{'OK' if item['success'] else 'FAILED'} {item['filename']}: hash={item['hash_valid']} metadata={item['metadata_valid']} decryption={item['decryption']} structure={item['structure']['status']} restore_tested=false")
         return 0 if all(r['success'] for r in results) else 74
+    if command == 'replicate':
+        reports = [replicate(path, sections) for path in select(c, args)]
+        if not args.quiet:
+            print(json.dumps({'results': reports}, separators=(',', ':')) if args.json else '\n'.join(f"Local={r['local_backup']} replication={r['replication']} policy={r['policy_satisfied']}" for r in reports))
+        return 0 if all(r['policy_satisfied'] for r in reports) else 75
     raise Failure('Unsupported command', 64)
 
 

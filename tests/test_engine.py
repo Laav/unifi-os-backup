@@ -10,6 +10,8 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib' / 'ub'))
 from core import Failure, atomic
 from verify import verify
+from storage import Store
+from replication import replicate
 
 
 class EngineCase(unittest.TestCase):
@@ -57,6 +59,35 @@ class EngineCase(unittest.TestCase):
         except OSError:
             self.skipTest('OS does not allow symlink creation')
         self.assertFalse(verify(q, self.c)['success'])
+
+    def filesystem(self, identifier='disk'):
+        target = self.root / identifier
+        target.mkdir(mode=0o700)
+        (target / '.unifi-backup-target').write_text(identifier)
+        return {'TARGET_TYPE': 'filesystem', 'TARGET_VERIFY': 'full', 'TARGET_REQUIRED': 'true',
+                'FILESYSTEM_PATH': str(target), 'FILESYSTEM_REQUIRE_MOUNT': 'false'}
+
+    def test_multi_destination_and_idempotence(self):
+        p = self.backup()
+        sections = {'main': self.c, 'disk': self.filesystem(), 'other': self.filesystem('other')}
+        report = replicate(p, sections)
+        self.assertTrue(report['policy_satisfied'])
+        self.assertEqual(report['successful_remote_count'], 2)
+        # Frozen remote sidecar records earlier state; it is never overwritten.
+        # Replaying an unchanged payload upload itself remains idempotent.
+        store = Store('disk', sections['disk'])
+        self.assertEqual(store.upload(p), 'already_present')
+        with self.assertRaises(Failure):
+            store.download('../escape', self.root / 'escaped')
+        self.assertEqual(len(store.listing()), 2)
+
+    def test_independent_failure(self):
+        p = self.backup()
+        sections = {'main': self.c, 'broken': {'TARGET_TYPE': 'filesystem', 'FILESYSTEM_PATH': '/nonexistent'}, 'disk': self.filesystem()}
+        report = replicate(p, sections)
+        self.assertEqual(report['replication'], 'partial')
+        self.assertEqual(report['local_backup'], 'success')
+        self.assertTrue(report['policy_satisfied'])
 
 
 if __name__ == '__main__':
