@@ -6,6 +6,7 @@ from core import Failure, atomic, digest, integer, iso, load, metadata, metric, 
 from storage import Store
 from verify import verify
 from retry_queue import update as queue_update
+from policy import upload_headers, confirmation, settings
 
 
 def remote_check(store, path, c, full=False):
@@ -42,13 +43,18 @@ def replicate(path, sections):
         try:
             store = Store(identifier, config)
             start = now()
-            store.upload(path)
+            lock_headers, horizon = upload_headers(store, path)
+            store.upload(path, lock_headers)
+            immutable = confirmation(store, path.name, horizon) if settings(store)[0] != 'none' else {'status': 'not_requested'}
+            if settings(store)[0] != 'none' and not immutable['confirmed']:
+                raise Failure('Provider did not confirm required object immutability', 75)
             verification = remote_check(store, path, c, store.level == 'full') if store.level != 'none' else {'status': 'not_checked'}
             # Provider sidecars are immutable snapshots. Never rewrite a remote
             # metadata object merely to update later local verification state.
             sidecar = Path(str(path) + '.json')
             try:
-                store.upload(sidecar)
+                side_headers, side_horizon = upload_headers(store, sidecar)
+                store.upload(sidecar, side_headers)
             except Failure as exc:
                 # An existing immutable snapshot may predate later operational
                 # annotations. Accept only identical original artifact identity.
@@ -60,8 +66,11 @@ def replicate(path, sections):
                     prior = load(remote_sidecar, 65536)
                     if prior.get('backup') != doc['backup'] or prior.get('encryption') != doc.get('encryption'):
                         raise Failure('Remote metadata identity conflict; overwrite refused', 75)
+            if settings(store)[0] != 'none' and not confirmation(store, sidecar.name)['confirmed']:
+                raise Failure('Provider did not confirm required sidecar immutability', 75)
             targets[identifier] = {'status': 'success', 'type': store.kind,
                                    'verification': verification, 'duration_seconds': now() - start,
+                                   'immutability': immutable,
                                    'completed_at': iso(), 'required': store.required}
             queue_update(c, path, identifier, True)
         except Failure as exc:

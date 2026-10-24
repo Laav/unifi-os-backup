@@ -15,6 +15,9 @@ from replication import replicate
 from replication import remote_check
 from retry_queue import retry, pins
 from core import state, save_state
+from retention import apply as retain
+from policy import settings, confirmation
+from unittest.mock import patch
 
 
 class EngineCase(unittest.TestCase):
@@ -116,6 +119,34 @@ class EngineCase(unittest.TestCase):
         replicate(p, {'main': self.c, 'broken': {'TARGET_TYPE': 'filesystem', 'FILESYSTEM_PATH': '/does-not-exist', 'TARGET_REQUIRED': 'true'}})
         self.assertFalse(pins(self.c))
         self.assertEqual(next(iter(state(self.c, 'retry-queue.json')['tasks'].values()))['status'], 'dead')
+
+    def test_retention_pins_and_gfs(self):
+        older = self.backup('01')
+        latest = self.backup('02')
+        self.c.update({'RETENTION_COUNT': '1', 'RETENTION_DAYS': '0', 'RETENTION_MIN_COUNT': '1'})
+        os.utime(older, (1, 1))
+        replicate(older, {'main': self.c, 'broken': {'TARGET_TYPE': 'filesystem', 'FILESYSTEM_PATH': '/absent'}})
+        report = retain(self.c)
+        self.assertTrue(older.exists())
+        self.assertIn('pending_retry', next(x for x in report['decisions'] if x['filename'] == older.name)['keep_reasons'])
+        self.c.update({'RETENTION_MODE': 'gfs', 'GFS_DAILY': '1', 'GFS_WEEKLY': '0', 'GFS_MONTHLY': '0', 'GFS_YEARLY': '0'})
+        report = retain(self.c, dry_run=True)
+        self.assertTrue(latest.exists())
+        self.assertIn('gfs_daily', next(x for x in report['decisions'] if x['filename'] == latest.name)['keep_reasons'])
+
+    def test_immutability_is_explicit_and_confirmed(self):
+        config = {'TARGET_TYPE': 's3', 'S3_ENDPOINT': 'https://s3.example.invalid', 'S3_BUCKET': 'backups',
+                  'S3_REGION': 'eu-west-1', 'S3_ACCESS_KEY_ID': 'test', 'S3_SECRET_ACCESS_KEY': 'test',
+                  'TARGET_IMMUTABILITY': 'request', 'TARGET_LOCK_MODE': 'COMPLIANCE'}
+        store = Store('s3', config)
+        with self.assertRaises(Failure):
+            settings(store)
+        config['TARGET_ALLOW_PERMANENT_LOCK'] = 'true'
+        with patch.object(store, 'head', return_value={'headers': {'x-amz-object-lock-mode': 'COMPLIANCE',
+             'x-amz-object-lock-retain-until-date': '2099-01-01T00:00:00Z'}}):
+            self.assertTrue(confirmation(store, self.backup().name)['confirmed'])
+        with patch.object(store, 'head', return_value={'headers': {}}):
+            self.assertFalse(confirmation(store, 'ignored')['confirmed'])
 
 
 if __name__ == '__main__':

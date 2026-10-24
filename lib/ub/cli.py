@@ -13,6 +13,8 @@ from replication import remote_check
 from storage import Store
 from retry_queue import retry
 from core import iso, save_state, state, metric, now
+from policy import capability, confirmation, settings
+from retention import apply as retain
 
 
 def configuration():
@@ -50,6 +52,8 @@ def parser(command):
     p.add_argument('--target')
     p.add_argument('--full', action='store_true')
     p.add_argument('--force-due', action='store_true', help='Retry pending jobs now; attempt/age limits still apply')
+    p.add_argument('--check', action='store_true')
+    p.add_argument('--dry-run', action='store_true')
     return p
 
 
@@ -65,6 +69,32 @@ def main():
         sections = {'main': c, args.target: sections[args.target]}
     if args.decrypt_check and not args.identity:
         raise Failure('--decrypt-check requires a protected --identity file', 78)
+    if command == 'retention':
+        report = retain(c, args.dry_run)
+        if not args.quiet:
+            print(json.dumps(report, separators=(',', ':')))
+        return 0
+    if command == 'storage-policy':
+        results = []
+        for identifier, config in sections.items():
+            if identifier == 'main':
+                continue
+            report = {'target': identifier, 'success': False, 'dry_run': args.dry_run}
+            try:
+                store = Store(identifier, config)
+                action, mode, days = settings(store)
+                report.update({'capabilities': capability(store), 'configured_action': action, 'configured_mode': mode, 'configured_days': days})
+                if args.file:
+                    report['object'] = confirmation(store, Path(args.file).name)
+                report['success'] = action == 'none' or report['capabilities']['supported']
+            except Failure as exc:
+                report['error'] = str(exc)
+            results.append(report)
+        if not results:
+            raise Failure('No storage targets configured', 78)
+        if not args.quiet:
+            print(json.dumps({'results': results}, separators=(',', ':')))
+        return 0 if all(r['success'] for r in results) else 75
     if command == 'verify':
         if not (args.latest or args.all or args.file or args.backup_id):
             args.latest = True
