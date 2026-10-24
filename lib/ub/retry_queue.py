@@ -31,18 +31,17 @@ def update(c, path, target, success, error='', increment=True):
                 # This task is explicitly dead-lettered rather than silently
                 # disappearing or pinning unlimited backup data.
                 job.update({'status': 'dead', 'last_error': 'queue_capacity_exceeded', 'updated_at': iso()})
-                save_state(c, 'retry-queue.json', queue)
-                return
-        attempts = job['attempts'] + int(increment)
-        max_attempts = integer(c, 'RETRY_MAX_ATTEMPTS', 8, 1, 100)
-        maximum = integer(c, 'RETRY_MAX_INTERVAL', 86400, 1, 604800)
-        base = integer(c, 'RETRY_BASE_INTERVAL', 300, 1, maximum)
-        interval = min(maximum, base * 2 ** min(attempts - 1, 30))
-        age_limit = integer(c, 'RETRY_MAX_AGE_DAYS', 7, 1, 365) * 86400
-        dead = attempts >= max_attempts or now() - job['created_timestamp'] >= age_limit
-        job.update({'status': 'dead' if dead else 'pending', 'attempts': attempts,
-                    'next_attempt_timestamp': now() + random.SystemRandom().randint(max(1, interval // 2), interval),
-                    'updated_at': iso(), 'last_error': error})
+        if job.get('last_error') != 'queue_capacity_exceeded':
+            attempts = job['attempts'] + int(increment)
+            max_attempts = integer(c, 'RETRY_MAX_ATTEMPTS', 8, 1, 100)
+            maximum = integer(c, 'RETRY_MAX_INTERVAL', 86400, 1, 604800)
+            base = integer(c, 'RETRY_BASE_INTERVAL', 300, 1, maximum)
+            interval = min(maximum, base * 2 ** min(attempts - 1, 30))
+            age_limit = integer(c, 'RETRY_MAX_AGE_DAYS', 7, 1, 365) * 86400
+            dead = attempts >= max_attempts or now() - job['created_timestamp'] >= age_limit
+            job.update({'status': 'dead' if dead else 'pending', 'attempts': attempts,
+                        'next_attempt_timestamp': now() + random.SystemRandom().randint(max(1, interval // 2), interval),
+                        'updated_at': iso(), 'last_error': error})
     # Bound historical terminal state as well as active pins.
     terminal = sorted((k for k, t in queue['tasks'].items() if t['status'] != 'pending'), key=lambda k: queue['tasks'][k]['created_timestamp'])
     for old in terminal[:-integer(c, 'RETRY_QUEUE_LIMIT', 1000, 1, 100000)]:

@@ -13,7 +13,7 @@ from verify import verify
 from storage import Store
 from replication import replicate
 from replication import remote_check
-from retry_queue import retry, pins
+from retry_queue import retry, pins, update as queue_update
 from core import state, save_state
 from retention import apply as retain
 from policy import settings, confirmation
@@ -123,6 +123,23 @@ class EngineCase(unittest.TestCase):
         replicate(p, {'main': self.c, 'broken': {'TARGET_TYPE': 'filesystem', 'FILESYSTEM_PATH': '/does-not-exist', 'TARGET_REQUIRED': 'true'}})
         self.assertFalse(pins(self.c))
         self.assertEqual(next(iter(state(self.c, 'retry-queue.json')['tasks'].values()))['status'], 'dead')
+
+    def test_queue_capacity_bounds_dead_letters_and_preserves_active_pins(self):
+        self.c['RETRY_QUEUE_LIMIT'] = '1'
+        p = self.backup()
+        queue_update(self.c, p, 'active', False, 'network_unavailable')
+        for identifier in ('overflow1', 'overflow2', 'overflow3'):
+            queue_update(self.c, p, identifier, False, 'upload_in_progress')
+            jobs = list(state(self.c, 'retry-queue.json')['tasks'].values())
+            self.assertEqual(len(jobs), 2)
+            self.assertEqual(sum(job['status'] == 'pending' for job in jobs), 1)
+            rejected = next(job for job in jobs if job['status'] == 'dead')
+            self.assertEqual(rejected['target'], identifier)
+            self.assertEqual(rejected['last_error'], 'queue_capacity_exceeded')
+            self.assertEqual(rejected['attempts'], 0)
+            self.assertIn(p.name, pins(self.c))
+        metrics = (self.root / 'unifi_retry.prom').read_text()
+        self.assertIn('unifi_backup_dead_uploads 1', metrics)
 
     def test_retention_pins_and_gfs(self):
         older = self.backup('01')
