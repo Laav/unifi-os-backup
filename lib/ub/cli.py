@@ -16,6 +16,7 @@ from core import iso, save_state, state, metric, now
 from policy import capability, confirmation, settings
 from retention import apply as retain
 from recovery import restore
+from anomaly import analyze, history_record
 
 
 def configuration():
@@ -59,6 +60,11 @@ def parser(command):
     p.add_argument('--date', help='ISO date prefix, such as 2026-10-24')
     p.add_argument('--output', help='Private restore destination directory')
     p.add_argument('--verify-only', action='store_true')
+    p.add_argument('--baseline', type=int)
+    p.add_argument('--explain', action='store_true')
+    p.add_argument('--run-id')
+    p.add_argument('--exit-code', type=int, default=0)
+    p.add_argument('--duration', type=int, default=0)
     return p
 
 
@@ -80,6 +86,17 @@ def main():
         if not args.quiet:
             print(json.dumps(report, separators=(',', ':')) if args.json else json.dumps(report, indent=2))
         return 0
+    if command == 'history':
+        history_record(c, {'id': args.run_id, 'exit_code': args.exit_code, 'duration_seconds': args.duration,
+                          'recorded_at': iso(), 'failure_category': {77: 'authentication', 74: 'download', 75: 'replication'}.get(args.exit_code, 'none')})
+        return 0
+    if command == 'analyze':
+        if args.baseline is not None and not 2 <= args.baseline <= 200:
+            raise Failure('--baseline must be between 2 and 200', 78)
+        report = analyze(c, args.baseline, args.all)
+        if not args.quiet:
+            print(json.dumps(report, separators=(',', ':')) if args.json else json.dumps(report, indent=2))
+        return 1 if report['results'][-1]['findings'] else 0
     if command == 'retention':
         report = retain(c, args.dry_run)
         if not args.quiet:

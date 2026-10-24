@@ -20,6 +20,7 @@ from policy import settings, confirmation
 from unittest.mock import patch
 from argparse import Namespace
 from recovery import restore
+from anomaly import evaluate
 
 
 class EngineCase(unittest.TestCase):
@@ -180,6 +181,15 @@ class EngineCase(unittest.TestCase):
         with self.assertRaises(Failure):
             restore(self.c, args)
         self.assertFalse(Path(args.output).exists())
+
+    def test_anomaly_baseline_and_cold_start(self):
+        rows = [{'id': str(i), 'controller': 'same', 'size': 10000, 'hash': 'a', 'timings': {}} for i in range(10)]
+        self.assertEqual(evaluate(rows, self.c)['status'], 'normal')
+        self.assertEqual(evaluate(rows[:2], self.c)['status'], 'cold_start')
+        rows[-1]['size'] = 1000
+        self.assertEqual(evaluate(rows, self.c)['severity'], 'WARNING')
+        rows[-1]['controller'] = 'different'
+        self.assertEqual(evaluate(rows, self.c)['status'], 'cold_start')
 
 
 if __name__ == '__main__':
