@@ -7,12 +7,13 @@ Version 1.4 adds `sudo unifi-backup-configure`: one full-screen management inter
 Ubuntu Server 22.04/24.04/26.04, Linux root privileges and Python's standard library. Only the interactive interface additionally needs `dialog`, a real TTY, `TERM` other than `dumb`, and at least 60 columns by 18 rows (100x28 or larger is recommended). It uses the available terminal size, supports resizing between dialogs and works over SSH; no desktop, pip packages or cloud SDKs are needed.
 
 ```bash
-sudo apt-get install dialog
 sudo ./install.sh --configure
 # Or after an ordinary unattended install/update:
 sudo unifi-backup-configure
 sudo unifi-backup-configure --guided
 ```
+
+From 1.4.2, installation/update automatically provisions missing `dialog` and other application dependencies using APT. `--no-install-deps` opts out for pre-provisioned/offline systems. No package installation happens during the wizard, validation or scheduled backups.
 
 For SSH automation do not invoke the wizard. For an interactive remote session use `ssh -t HOST`, then run it there. Terminal, scrollback and session recording are security boundaries: never record secret entry. Passwords/tokens use an empty, non-echoing password box; existing values are never prefilled. Blank keeps an existing sensitive value; clearing requires a separate explicit action. Login passwords containing special characters/multiline literals are preserved and serialized safely; the single-line UI is not a multiline secret editor.
 
@@ -103,7 +104,7 @@ For an independent configuration backup, stop configuration writes and use your 
 ## Troubleshooting and rollout checklist
 
 - No TTY/TERM: open an interactive terminal (`ssh -t`) or use offline commands.
-- Missing dialog: install the optional Ubuntu package explicitly; normal backups need no dialog.
+- Missing dialog: rerun the current `sudo ./update.sh` or `sudo ./install.sh`; missing dependencies are provisioned automatically from 1.4.2. `--no-install-deps` deliberately opts out. Normal backups need no dialog.
 - Small terminal: resize to at least 60x18 and reopen. Unapplied edits are not persisted.
 - Unsupported Bash syntax: preserve a private backup, replace expressions with literals manually; the manager will not execute them.
 - Unsafe permissions/symlink: correct owner/modes and choose nonsymlinked paths; the manager does not silently chmod existing secret files or follow links.

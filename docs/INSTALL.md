@@ -8,14 +8,11 @@
 - Network reachability to the HTTPS UniFi OS controlplane.
 - `age` only when optional encryption at rest is enabled.
 - Python's standard library is sufficient for the new data/storage helpers; no pip packages or cloud SDKs are needed.
-- The 1.4 wizard optionally requires `dialog` and an interactive terminal. Backups, offline configuration validation and unattended installation do not.
+- The 1.4 wizard requires `dialog` and an interactive terminal. Backups, offline configuration validation and unattended installation do not require a terminal.
 
-On Ubuntu:
+From 1.4.2, installer and updater automatically install missing dependencies from configured APT repositories, including Git, CA certificates, `dialog` and `age`. No manual package-install step is required. The system must already use systemd and have working APT repositories/network access. If Git is absent, use the bootstrap download below with the system's existing wget or curl.
 
-```bash
-sudo apt-get update
-sudo apt-get install -y git curl python3 coreutils findutils util-linux
-```
+Use `--no-install-deps` for offline or centrally provisioned hosts. Missing core dependencies then fail with exit 69; missing dialog/age warn and leave those features unavailable. `--configure` still requires dialog. `sudo ./install.sh --dependencies-only` checks/provisions packages without deploying application/configuration files. When all dependencies are available, APT is not invoked. Package installation uses noninteractive APT with `--no-install-recommends`, `--no-remove` and `--no-upgrade`; there is no distribution upgrade or repository modification. APT can install/adjust transitive dependencies, and package changes are not rolled back if provisioning fails. Application deployment stops on provisioning failure.
 
 ## Preferred: inspect a Git checkout
 
@@ -25,7 +22,7 @@ cd /opt/unifi-os-backup
 git status
 git log -1 --show-signature
 sudo ./install.sh
-# Optional from version 1.4, after installing dialog:
+# Optional from version 1.4; dependencies are provisioned automatically:
 # sudo ./install.sh --configure
 ```
 
@@ -42,7 +39,7 @@ chmod 0755 install.sh
 sudo ./install.sh --repository-url https://github.com/Laav/unifi-os-backup.git
 ```
 
-The standalone installer requires Git, clones into `/opt/unifi-os-backup`, then installs from that checkout. It deliberately does not install packages behind the administrator's back. For stronger supply-chain assurance, download a tagged release, compare a checksum published through an independent trusted channel, verify a signed tag/commit, and inspect the diff before running it.
+The standalone installer provisions missing Git/application dependencies, clones into `/opt/unifi-os-backup`, then installs from that checkout. Bootstrap selects the current default branch. For stronger supply-chain assurance, download a tagged release, compare a checksum published through an independent trusted channel, verify any available trusted signature, and inspect the diff before running it. Dependencies use the host's existing APT trust/repository policy. Do not disable repository signature verification to work around provisioning failures.
 
 `curl ... | sudo bash` is not recommended: it removes the inspection step and can execute a truncated, redirected, or newly replaced response immediately as root.
 
@@ -69,14 +66,13 @@ The examples are copied only when the destination does not exist. Re-running `in
 
 Version 1.3 also installs `unifi-backup-verify`, `-replicate`, `-remote-verify`, `-retry`, `-storage-policy`, `-retention`, `-restore`, `-analyze` and `-diff`, the shared `lib/ub` Python modules, a protected `targets.d` example, and three optional timers. Verification/remote-verification/retry timers are not enabled or started by installation/update. Their config flags also default to false.
 
-For a stable reproducible installation, select the published `v1.4.1` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
+For a stable reproducible installation, select the published `v1.4.2` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
 
 ## Recommended first run on a test machine
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git curl python3 coreutils findutils util-linux dialog
-sudo git clone --branch v1.4.1 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
+# If Git is unavailable, first use the inspected bootstrap above with --no-enable.
+sudo git clone --branch v1.4.2 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
 cd /opt/unifi-os-backup
 sudo ./install.sh --no-enable --configure
 sudo unifi-backup-configure --validate --json
@@ -99,7 +95,6 @@ Inspect effective drop-ins and complete a recovery drill before enabling timers.
 Version 1.4 provides one terminal configuration interface:
 
 ```bash
-sudo apt-get install dialog
 sudo unifi-backup-configure --guided
 sudo unifi-backup-configure --validate
 ```

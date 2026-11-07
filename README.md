@@ -4,7 +4,7 @@ Production-oriented Bash tooling that signs in to a local UniFi OS controlplane,
 
 Version 1.3 adds repeatable integrity verification, independent storage targets, persistent replication retries, provider immutability checks, GFS retention, recovery preparation, deterministic anomaly analysis, and a privacy-preserving configuration-export diff engine. Native opaque `.unifi` semantic parsing is explicitly unsupported; see [format capabilities](docs/CONFIG-DIFF.md).
 
-Version **1.4.1** adds one secure full-screen terminal configuration manager for all integrations: `sudo unifi-backup-configure`. Configuration remains in compatible external files; existing backups and automation do not need the wizard. Use the [tagged release](https://github.com/Laav/unifi-os-backup/releases/tag/v1.4.1) for a reproducible test installation.
+Version **1.4.2** fixes literal-dollar parsing and automatically provisions missing dependencies during installation/update, including `dialog` for the full-screen configuration manager: `sudo unifi-backup-configure`. Configuration remains in compatible external files; existing backups and automation do not need the wizard. Use the [tagged release](https://github.com/Laav/unifi-os-backup/releases/tag/v1.4.2) for a reproducible test installation.
 
 > [!IMPORTANT]
 > `POST /api/auth/login` and `GET /api/backup/download` are observed UniFi OS **controlplane endpoints**, not a documented stable public Ubiquiti API. UniFi upgrades can change or remove them. This project fails closed when authentication, status, type, size, or content differs from the expected behavior. Read [Endpoint compatibility](docs/TROUBLESHOOTING.md#endpoint-compatibility) before production use.
@@ -34,11 +34,11 @@ The official UniFi OS Server currently documents Ubuntu 24.04 or later for its o
 ## Quick start
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git curl python3 coreutils findutils util-linux dialog
-sudo git clone https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
+wget -qO install.sh https://raw.githubusercontent.com/Laav/unifi-os-backup/v1.4.2/install.sh
+less install.sh
+chmod 0755 install.sh
+sudo ./install.sh --repository-url https://github.com/Laav/unifi-os-backup.git --configure
 cd /opt/unifi-os-backup
-sudo ./install.sh --configure
 sudo unifi-backup-configure --validate
 # Explicit network test; does not create a backup:
 sudo unifi-backup-check --live
@@ -49,7 +49,7 @@ sudo systemctl start unifi-backup-monitor.timer
 
 The installer enables the timer but deliberately does not start it until configuration has been reviewed and a live login check succeeds. The default schedule is Sunday at 03:00 local time, with `Persistent=true`.
 
-For unattended installation omit `--configure`; `dialog` is optional for normal backup operation. Existing installations can run `sudo ./update.sh` followed by `sudo unifi-backup-configure`. The updater never launches the wizard or migrates configuration automatically. For a non-mutating redacted view use `sudo unifi-backup-configure --inspect --json`.
+Installer and updater install missing packages through the host's configured APT repositories; no separate `apt install` is needed. The bootstrap above clones the current default branch; use the pinned-checkout procedure in [INSTALL.md](docs/INSTALL.md#recommended-first-run-on-a-test-machine) for reproducible source. For unattended installation omit `--configure`; normal backups do not use `dialog`. Pre-provisioned/offline hosts can opt out with `--no-install-deps`. Existing installations can run `sudo ./update.sh` followed by `sudo unifi-backup-configure`. The updater never launches the wizard or migrates configuration automatically. For a non-mutating redacted view use `sudo unifi-backup-configure --inspect --json`.
 
 Read [the setup walkthrough](docs/CONFIGURE.md), [architecture audit](docs/CONFIGURATION-AUDIT.md), and [generated setting inventory](docs/CONFIGURATION-REFERENCE.md). Use arrows, Tab, Space and Enter; Back/Next navigate, Cancel discards unapplied edits, and Finish requires explicit confirmation. Live tests and timer activation remain separate opt-in actions.
 
@@ -117,7 +117,7 @@ For a stable release checkout:
 ```bash
 git status --short
 sudo git fetch origin --tags
-sudo git switch --detach v1.4.1
+sudo git switch --detach v1.4.2
 sudo ./update.sh
 unifi-backup --version
 ```
@@ -138,7 +138,7 @@ See [SECURITY.md](SECURITY.md) for reporting and [docs/SECURITY.md](docs/SECURIT
 
 ## Project status
 
-Source version 1.4.1. GitHub tags/releases are authoritative for published versions. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
+Source version 1.4.2. GitHub tags/releases are authoritative for published versions. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
 
 ## License
 

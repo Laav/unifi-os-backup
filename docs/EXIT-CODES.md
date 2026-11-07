@@ -4,6 +4,8 @@ The 1.4 configuration manager follows the same ranges, with 65 for unsafe/unsupp
 
 The commands use the established BSD `sysexits` range where practical. Monitoring status uses the separate Nagios convention documented below.
 
+Installer/updater 1.4.2 return 69 when dependency provisioning fails, including APT failures or missing core dependencies with `--no-install-deps`. Application deployment has not started at that point; APT package changes are not transactional or rolled back. Missing optional dialog/age with the explicit opt-out warns without failing a headless installation; `--configure` still requires dialog and a TTY.
+
 | Code | Name/category | Typical meaning |
 |---:|---|---|
 | `0` | success | Requested operation completed |

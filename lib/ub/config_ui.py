@@ -27,7 +27,7 @@ class Dialog:
             raise Failure('Interactive setup needs a TTY and TERM (SSH: ssh -t). Use --validate or --inspect for automation.', 69)
         self.program = shutil.which('dialog')
         if not self.program:
-            raise Failure('Optional UI dependency missing: install dialog with sudo apt-get install dialog', 69)
+            raise Failure('UI dependency dialog is unavailable; rerun the current install.sh or update.sh with automatic dependency provisioning enabled (the default)', 69)
 
     def widget(self, title, widget, values, extra=False, ok='Next', cancel='Cancel', default_no=False):
         columns, lines = shutil.get_terminal_size()

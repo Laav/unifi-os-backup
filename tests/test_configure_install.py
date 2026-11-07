@@ -31,11 +31,15 @@ class LifecycleCase(unittest.TestCase):
             commands = root / 'commands'; commands.mkdir()
             systemctl = commands / 'systemctl'
             systemctl.write_text('#!/usr/bin/env bash\nexit 0\n'); systemctl.chmod(0o755)
+            # Every package-manager call is intercepted, including unexpected
+            # calls: this test must never provision the CI host itself.
+            apt = commands / 'apt-get'
+            apt.write_text('#!/usr/bin/env bash\necho "Unexpected real APT invocation" >&2\nexit 99\n'); apt.chmod(0o755)
             env = {**os.environ, 'PATH': str(commands) + os.pathsep + os.environ['PATH']}
-            def run(script, *args):
+            def run(script, *args, code=0):
                 result = subprocess.run(['bash', str(checkout / script), *args], cwd=checkout, env=env,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False)
-                self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+                self.assertEqual(result.returncode, code, result.stderr.decode(errors='replace'))
             run('install.sh', '--no-enable')
             config = staged / 'etc/unifi-backup/unifi-backup.env'
             self.assertTrue((staged / 'usr/local/sbin/unifi-backup-configure').is_file())
@@ -47,7 +51,35 @@ class LifecycleCase(unittest.TestCase):
             backup = staged / 'var/backups/unifi/synthetic.unifi'; backup.write_bytes(b'synthetic test data')
             run('install.sh', '--no-enable')
             self.assertEqual(config.read_bytes(), original)
+            provisioned = root / 'dialog-installed'
+            apt_log = root / 'apt-calls'
+            shell_mock = root / 'dependency-mock.bash'
+            shell_mock.write_text('''command() {
+  if [[ $1 == -v && $2 == dialog && ! -e "$UB_TEST_MARKER" ]]; then return 1; fi
+  builtin command "$@"
+}
+apt-get() {
+  printf '%s\\n' "$*" >> "$UB_TEST_LOG"
+  if [[ -n $UB_TEST_FAIL && " $* " == *" $UB_TEST_FAIL "* ]]; then return 100; fi
+  if [[ " $* " == *" install "* ]]; then touch "$UB_TEST_MARKER"; fi
+}
+''')
+            deployed = staged / 'usr/local/sbin/unifi-backup-configure'
+            sentinel = deployed.read_bytes() + b'\n# synthetic deployment sentinel\n'
+            deployed.write_bytes(sentinel)
+            env.update(BASH_ENV=str(shell_mock), UB_TEST_MARKER=str(provisioned), UB_TEST_LOG=str(apt_log), UB_TEST_FAIL='update')
+            run('update.sh', code=69)
+            self.assertEqual(config.read_bytes(), original)
+            self.assertEqual(deployed.read_bytes(), sentinel)
+            self.assertFalse(provisioned.exists())
+            apt_log.unlink()
+            env['UB_TEST_FAIL'] = ''
             run('update.sh')
+            self.assertTrue(provisioned.exists())
+            self.assertEqual(len(apt_log.read_text().splitlines()), 2)
+            self.assertTrue(apt_log.read_text().splitlines()[1].endswith(' install dialog'))
+            self.assertNotEqual(deployed.read_bytes(), sentinel)
+            env.pop('BASH_ENV')
             self.assertEqual(config.read_bytes(), original)
             self.assertTrue(backup.exists())
             self.assertTrue((config.parent / '.configure.lock').exists())

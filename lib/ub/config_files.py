@@ -80,6 +80,18 @@ def quote(value):
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
+def expands(text, position, double_quoted=False):
+    """A dollar is literal unless it introduces actual Bash expansion syntax."""
+    following = text[position + 1:position + 2]
+    if not following:
+        return False
+    if text.startswith('\\\n', position + 1):
+        # Bash removes continuations before expansion. Do not reinterpret a
+        # reference split over physical lines as a harmless literal dollar.
+        return True
+    return bool(re.fullmatch(r'[A-Za-z0-9_@*#?$!{(\[\-]', following)) or (not double_quoted and following == '"')
+
+
 def literal(text, start):
     """Parse one concatenated shell word. Expansions/operators are forbidden."""
     out, i = [], start
@@ -94,7 +106,7 @@ def literal(text, start):
             i += 1
             while i < len(text) and text[i] != '"':
                 char = text[i]
-                if char in '$`':
+                if char == '`' or char == '$' and expands(text, i, double_quoted=True):
                     raise Failure('Shell expansion is unsupported; use literal assignments', 65)
                 if char == '\\' and i + 1 < len(text) and text[i + 1] in '$`"\\\n':
                     i += 1
@@ -147,7 +159,7 @@ def literal(text, start):
             if text[i] != '\n':
                 out.append(text[i])
             i += 1
-        elif char in '$`;|&<>(){}~\r':
+        elif char == '$' and expands(text, i) or char in '`;|&<>(){}~\r':
             raise Failure('Shell expressions/operators are unsupported; no rewrite performed', 65)
         else:
             out.append(char); i += 1
@@ -157,9 +169,13 @@ def literal(text, start):
 
 
 class Document:
-    def __init__(self, text=''):
+    def __init__(self, text='', source=None):
+        self.source = Path(source).name if source else 'configuration'
+        if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}', self.source):
+            self.source = 'configuration'
+        self.text = text
         if '\0' in text:
-            raise Failure('Configuration contains NUL bytes', 65)
+            raise self.syntax('Configuration contains NUL bytes', 0)
         self.text, self.values, self.spans = text, {}, {}
         i = 0
         while i < len(text):
@@ -173,10 +189,13 @@ class Document:
                 continue
             match = re.match(r'(?:export[ \t]+)?([A-Z][A-Z0-9_]*)=', text[i:])
             if not match:
-                raise Failure('Unsupported shell syntax; only comments and literal assignments can be managed', 65)
+                raise self.syntax('Unsupported shell syntax; only comments and literal assignments can be managed', i)
             key = match.group(1)
             start = i + len(match.group())
-            value, end = literal(text, start)
+            try:
+                value, end = literal(text, start)
+            except Failure as exc:
+                raise self.syntax(str(exc), i, key, exc.code) from None
             self.values[key], self.spans[key] = value, (start, end)
             i = end
             while i < len(text) and text[i] in ' \t':
@@ -185,7 +204,13 @@ class Document:
                 end = text.find('\n', i)
                 i = len(text) if end < 0 else end
             if i < len(text) and text[i] != '\n':
-                raise Failure('Multiple shell commands or assignments on one line are unsupported', 65)
+                raise self.syntax('Multiple shell commands or assignments on one line are unsupported', i, key)
+
+    def syntax(self, message, position, key=None, code=65):
+        location = self.source + ': line ' + str(self.text.count('\n', 0, position) + 1)
+        if key:
+            location += ', setting ' + key
+        return Failure(location + ': ' + message + '. Values are hidden; no configuration was executed or rewritten.', code)
 
     def render(self, values):
         replacements, added = [], []
@@ -206,7 +231,7 @@ class Document:
         if added:
             text += ('\n' if text and not text.endswith('\n') else '') + ''.join(added)
         # Generated content must round-trip before it can leave memory.
-        parsed = Document(text)
+        parsed = Document(text, source=self.source)
         if any(parsed.values.get(k) != v for k, v in values.items()):
             raise Failure('Configuration serialization invariant failed', 70)
         data = text.encode('utf-8')
@@ -218,6 +243,6 @@ class Document:
 def load_document(path):
     data = read_bytes(path)
     try:
-        return Document(data.decode('utf-8') if data is not None else '')
+        return Document(data.decode('utf-8') if data is not None else '', source=path)
     except UnicodeError:
         raise Failure('Configuration must be valid UTF-8; no rewrite performed', 65) from None

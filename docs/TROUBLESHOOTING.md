@@ -2,7 +2,11 @@
 
 ## Configuration manager
 
-From version 1.4 use `sudo unifi-backup-configure --validate --json` or a non-mutating `--inspect`. The full wizard requires optional dialog, a real TTY and at least 60x18; use `ssh -t` when needed. Unsupported shell expressions are deliberately refused rather than executed. Insecure ownership/modes and symlinks must be corrected explicitly.
+From version 1.4 use `sudo unifi-backup-configure --validate --json` or a non-mutating `--inspect`. The full wizard requires dialog, a real TTY and at least 60x18; use `ssh -t` when needed. Installer/updater 1.4.2 automatically provision missing dependencies; rerun the current updater if dialog is missing. Check its APT errors and configured repositories/network access if provisioning fails. `--no-install-deps` explicitly disables this behavior. Unsupported shell expressions are deliberately refused rather than executed. Insecure ownership/modes and symlinks must be corrected explicitly.
+
+### Shell expansion is unsupported
+
+1.4.1 incorrectly refused even literal dollar signs inside double quotes. Upgrade to 1.4.2 for literal-dollar support. Genuine shell expansion such as `$VARIABLE`, `${VARIABLE}` or `$(command)` remains unsupported by the manager, even if the legacy Bash reader accepts it. The new diagnostic identifies the file basename, line and setting without printing its value. Inspect that location locally using `sudoedit`; preserve the intended value using a literal assignment. Single quotes preserve literal dollars; the manager's serializer safely handles embedded quotes. Never post complete env files, password lines or secret-bearing diffs for troubleshooting. Validation and update do not rewrite these files or execute their contents.
 
 An active configuration lock returns 75; wait and reload instead of deleting the lock inode. An interrupted multi-file apply leaves a private pending marker and blocks updated readers: use `sudo unifi-backup-configure --recover --yes` with the same `--config` path. Never remove the marker to bypass recovery. Custom schedules require `systemd-analyze`, and custom directories must be compatible with the hardened units. See [CONFIGURE.md](CONFIGURE.md) for rollback, overrides and explicit timer activation.
 

@@ -17,7 +17,7 @@ jobs:
         ubuntu: ["22.04", "24.04", "26.04"]
     steps:
       - name: Install static analysis
-        run: apt-get update && apt-get install -y git bash curl python3 coreutils findutils util-linux shellcheck systemd age dialog
+        run: apt-get update && apt-get install -y git bash curl python3 coreutils findutils util-linux shellcheck systemd age dialog hostname ca-certificates
       - uses: actions/checkout@v5
       - name: Trust the checked-out workspace in the container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"

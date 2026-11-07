@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib' / 'ub'))
 from core import Failure
-from config_files import Document, checked, fingerprint, quote
+from config_files import Document, checked, fingerprint, quote, load_document
 from config_model import Model, calendar, public_recipients, write_directory, read_access
 from config_schema import SCOPES, defaults, reference, validate_operations
 from config_transaction import HEADER, Transaction, lock, write
@@ -112,6 +112,40 @@ class ConfigurationCase(unittest.TestCase):
             with self.subTest(syntax=text[:8]):
                 with self.assertRaises(Failure):
                     Document(text)
+
+    def test_literal_dollars_are_not_mistaken_for_expansions(self):
+        for value in ('synthetic$', 'synthetic$%', 'synthetic$.', 'synthetic$:', "synthetic$'quoted'", 'synthetic$)', '$'):
+            with self.subTest(length=len(value)):
+                self.assertEqual(Document('VALUE="' + value + '"\n').values['VALUE'], value)
+        for value in ('synthetic$', 'synthetic$%', 'synthetic$.', 'synthetic$:'):
+            self.assertEqual(Document('VALUE=' + value + '\n').values['VALUE'], value)
+        for value in ('$HOME', '${HOME}', '$?', '$$', '$1', '$-', '$@', '$[1+1]', '$(id)', '$\\\nHOME'):
+            with self.assertRaises(Failure):
+                Document('VALUE="' + value + '"\n')
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Bash semantics comparison runs on Linux')
+    def test_literal_dollars_match_real_bash_without_rewriting(self):
+        path = self.root / 'synthetic.env'
+        for value in ('synthetic$', 'synthetic$%', 'synthetic$.', "synthetic$'quoted'", 'synthetic$)'):
+            data = ('SYNTHETIC_VALUE="' + value + '"\n').encode()
+            path.write_bytes(data); path.chmod(0o600)
+            parsed = load_document(path)
+            result = subprocess.run(['bash', '--noprofile', '--norc', '-c', 'set -eu; source "$1"; printf "%s" "$SYNTHETIC_VALUE"', 'test', str(path)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(parsed.values['SYNTHETIC_VALUE'], result.stdout.decode())
+            self.assertEqual(path.read_bytes(), data)
+
+    def test_syntax_error_identifies_file_line_setting_not_secret(self):
+        path = self.root / 'synthetic.env'
+        path.write_bytes(b'# header\nUNIFI_PASSWORD="synthetic-hidden$MISSING"\n'); path.chmod(0o600)
+        with self.assertRaises(Failure) as caught:
+            load_document(path)
+        message = str(caught.exception)
+        self.assertIn('synthetic.env: line 2, setting UNIFI_PASSWORD', message)
+        self.assertNotIn('synthetic-hidden', message)
+        self.assertNotIn('MISSING', message)
+        self.assertEqual(caught.exception.code, 65)
 
     def test_existing_defaults_and_disabled_integrations_are_not_written(self):
         model = self.model()

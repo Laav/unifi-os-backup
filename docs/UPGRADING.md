@@ -1,14 +1,14 @@
 # Upgrading
 
-## Upgrade 1.3.0 to 1.4.1
+## Upgrade 1.3.0 or 1.4.1 to 1.4.2
 
-This is a compatible MINOR feature update. Pin the release instead of relying on an unreviewed moving branch:
+1.4.2 is a compatible patch to the 1.4 configuration manager. Pin the release instead of relying on an unreviewed moving branch:
 
 ```bash
 cd /opt/unifi-os-backup
 git status --short
 sudo git fetch origin --tags
-sudo git switch --detach v1.4.1
+sudo git switch --detach v1.4.2
 sudo ./update.sh
 unifi-backup --version
 unifi-backup-configure --version
@@ -16,11 +16,13 @@ sudo unifi-backup-configure --inspect --json
 sudo unifi-backup-configure --validate --json
 ```
 
-Review local changes before switching; do not force a checkout over them. Both version commands should report 1.4.1. The updater installs the checked-out source; it does not independently fetch/select a release. For a fresh test machine with no timers enabled, follow [INSTALL.md](INSTALL.md#recommended-first-run-on-a-test-machine).
+Review local changes before switching; do not force a checkout over them. Both version commands should report 1.4.2. The updater installs the checked-out source; it does not independently fetch/select a release. For a fresh test machine with no timers enabled, follow [INSTALL.md](INSTALL.md#recommended-first-run-on-a-test-machine).
 
 The updater preserves all existing env/recipient files, independent targets, backups, catalog and monitoring data. It installs the optional manager and pre-creates `.configure.lock` for read-only access by hardened services. Allow any jobs started by older binaries to finish before the first configuration transaction. No wizard, parser conversion, storage migration, timer activation or destructive operation is run automatically.
 
-Install `dialog` only if the UI is desired, then run `sudo unifi-backup-configure`. Its stricter safe-literal/permission/dependency checks may require correcting old manual syntax before manager editing; this does not make the wizard mandatory for working existing backups. Start with `--inspect --json` and `--validate`; live login/provider/notification tests remain explicit.
+The updater now provisions missing dependencies through configured APT repositories, including `dialog` and `age`, before deploying application files. No manual `apt install` is needed. For pre-provisioned/offline hosts use `sudo ./update.sh --no-install-deps`; missing optional features then warn, missing core dependencies fail. Provisioning errors return 69 and stop application deployment. See [INSTALL.md](INSTALL.md) for package side effects and requirements. The updater does not launch the wizard; run `sudo unifi-backup-configure` separately.
+
+1.4.2 accepts literal dollar signs that were incorrectly rejected in double quotes (for example a trailing dollar). Actual shell expansions remain unsupported and are never executed. Syntax errors now identify only the file basename, line and setting, with values hidden. If validation still rejects an existing file, inspect that location privately with `sudoedit`; use literal assignments, with single quotes for literal dollar-containing secrets. Do not blindly change real `$VARIABLE` references: first understand the intended effective value. Working legacy backups need no wizard conversion. Start with `--inspect --json` and `--validate`; live login/provider/notification tests remain explicit. No configuration file is rewritten by validation/update.
 
 No physical file-layout migration is required. Legacy credentials are not copied/activated automatically, and disabled target files are retained. New drop-ins affect only reviewed schedule/config-path/write-access choices and retain service hardening. See [CONFIGURE.md](CONFIGURE.md) for configuration rollback and the private transaction journal.
 

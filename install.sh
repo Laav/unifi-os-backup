@@ -7,16 +7,67 @@ INSTALL_DIR="/opt/unifi-os-backup"
 REPOSITORY_URL=""
 ENABLE_TIMER=true
 CONFIGURE=false
+INSTALL_DEPS=true
+DEPENDENCIES_ONLY=false
+
+ensure_dependencies() {
+  local spec executable package
+  local -a packages=() missing_core=() missing_optional=()
+  local -A seen=()
+  # Never replace an unsupported init system merely to satisfy a dependency.
+  command -v systemctl >/dev/null 2>&1 || die "a systemd-based Ubuntu/Debian host is required; no init-system replacement is attempted" 69
+  for spec in git:git curl:curl python3:python3 sha256sum:coreutils stat:coreutils install:coreutils mktemp:coreutils find:findutils flock:util-linux hostname:hostname dialog:dialog age:age; do
+    executable=${spec%%:*}; package=${spec#*:}
+    if ! command -v "$executable" >/dev/null 2>&1; then
+      case "$executable" in dialog|age) missing_optional+=("$executable") ;; *) missing_core+=("$executable") ;; esac
+      if [[ -z ${seen[$package]:-} ]]; then packages+=("$package"); seen[$package]=1; fi
+    fi
+  done
+  if [[ ! -s /etc/ssl/certs/ca-certificates.crt ]]; then
+    packages+=(ca-certificates)
+    missing_core+=(ca-certificates)
+  fi
+  if ((${#packages[@]} == 0)); then
+    log "All application dependencies are available"
+    return 0
+  fi
+  if [[ $INSTALL_DEPS == false ]]; then
+    ((${#missing_core[@]} == 0)) || die "missing required dependencies: ${missing_core[*]}; automatic provisioning was explicitly disabled" 69
+    log "Automatic provisioning disabled; unavailable optional features: ${missing_optional[*]}"
+    return 0
+  fi
+  command -v apt-get >/dev/null 2>&1 || die "automatic provisioning requires APT; pre-provision dependencies on unsupported platforms" 69
+  log "Installing missing dependencies from configured APT repositories: ${packages[*]}"
+  # No distribution upgrade, repository modification, package removal or
+  # unauthenticated download. Abort before deploying application files on error.
+  if ! apt-get -o DPkg::Lock::Timeout=120 -o Acquire::Retries=2 update; then
+    die "dependency index refresh failed; application files and configuration were not changed" 69
+  fi
+  if ! DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=120 --assume-yes --no-install-recommends --no-remove --no-upgrade install "${packages[@]}"; then
+    die "dependency installation failed; application files and configuration were not changed" 69
+  fi
+  for executable in "${missing_core[@]}" "${missing_optional[@]}"; do
+    if [[ $executable == ca-certificates ]]; then
+      [[ -s /etc/ssl/certs/ca-certificates.crt ]] || die "the system CA bundle remains unavailable" 69
+    else
+      command -v "$executable" >/dev/null 2>&1 || die "dependency remains unavailable after provisioning: $executable" 69
+    fi
+  done
+}
 
 usage() {
   cat <<'EOF'
-Usage: sudo ./install.sh [--repository-url HTTPS_GIT_URL] [--install-dir DIR] [--no-enable] [--configure]
+Usage: sudo ./install.sh [--repository-url HTTPS_GIT_URL] [--install-dir DIR] [--no-enable] [--configure] [--no-install-deps]
+       sudo ./install.sh --dependencies-only [--no-install-deps]
 
 From a complete checkout, files are installed from that checkout. When only this
 bootstrap script was downloaded, --repository-url is required and Git clones the
 repository into /opt/unifi-os-backup.
---configure explicitly opens the optional dialog-based terminal wizard after
-installation. Without it installation never needs a TTY or dialog.
+Missing dependencies (including dialog and age) are installed through configured
+APT repositories by default. --no-install-deps opts out for pre-provisioned or
+offline systems. --dependencies-only checks/provisions packages without deploying
+application/configuration files. --configure explicitly opens the wizard after
+installation; ordinary installation remains noninteractive.
 EOF
 }
 
@@ -26,6 +77,8 @@ while (($#)); do
     --install-dir) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; INSTALL_DIR=$2; shift 2 ;;
     --no-enable) ENABLE_TIMER=false; shift ;;
     --configure) CONFIGURE=true; shift ;;
+    --no-install-deps) INSTALL_DEPS=false; shift ;;
+    --dependencies-only) DEPENDENCIES_ONLY=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "$PROGRAM: unknown option: $1" >&2; exit 64 ;;
   esac
@@ -34,14 +87,21 @@ done
 log() { printf '%s: %s\n' "$PROGRAM" "$*"; }
 die() { printf '%s: ERROR: %s\n' "$PROGRAM" "$*" >&2; exit "${2:-1}"; }
 (( EUID == 0 )) || die "run this installer as root (sudo ./install.sh)" 77
+if [[ $DEPENDENCIES_ONLY == true ]]; then
+  ensure_dependencies
+  exit 0
+fi
 for protected in /etc/unifi-backup /etc/unifi-backup/targets.d /etc/unifi-backup/.configure.lock /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /etc/unifi-backup/webhook.env /etc/unifi-backup/age-recipients.txt; do
   [[ ! -L $protected ]] || die "configuration symlink refused" 78
 done
 if [[ $CONFIGURE == true ]]; then
   [[ -t 0 && -t 1 ]] || die "--configure needs a terminal; use sudo unifi-backup-configure later" 69
-  command -v dialog >/dev/null 2>&1 || die "--configure needs the optional dialog package (apt-get install dialog)" 69
 fi
 [[ $INSTALL_DIR == /* && $INSTALL_DIR != "/" ]] || die "--install-dir must be an absolute, non-root path" 64
+ensure_dependencies
+if [[ $CONFIGURE == true ]]; then
+  command -v dialog >/dev/null 2>&1 || die "the wizard needs dialog; rerun without --no-install-deps to provision it automatically" 69
+fi
 
 for command_name in bash curl python3 sha256sum find stat flock systemctl install; do
   command -v "$command_name" >/dev/null 2>&1 || die "missing dependency: $command_name" 69
@@ -53,7 +113,7 @@ if [[ ! -f $source_dir/bin/unifi-backup || ! -f $source_dir/systemd/unifi-backup
   [[ -n $REPOSITORY_URL ]] || die "standalone bootstrap mode requires --repository-url" 64
   [[ $REPOSITORY_URL =~ ^https://[^[:space:]]+\.git$ ]] || die "repository URL must be an HTTPS .git URL" 64
   [[ $REPOSITORY_URL != *"@"* && $REPOSITORY_URL != *"?"* && $REPOSITORY_URL != *"#"* ]] || die "repository URL must not contain credentials, a query, or a fragment" 64
-  command -v git >/dev/null 2>&1 || die "Git is required for bootstrap mode. Install it explicitly (apt-get install git) and retry." 69
+  command -v git >/dev/null 2>&1 || die "Git is required for bootstrap mode; rerun without --no-install-deps" 69
   if [[ -e $INSTALL_DIR ]]; then
     [[ -d $INSTALL_DIR/.git ]] || die "$INSTALL_DIR already exists and is not a Git checkout" 73
     log "Using existing checkout at $INSTALL_DIR"
@@ -167,7 +227,7 @@ fi
 cat <<'EOF'
 
 Installation complete.
-  1. Run: sudo unifi-backup-configure (optional dependency: apt-get install dialog)
+  1. Run: sudo unifi-backup-configure
      Or retain the documented manual configuration workflow.
   2. Validate without network: sudo unifi-backup-configure --validate
      Optional explicit login test: sudo unifi-backup-check --live

@@ -1,6 +1,18 @@
 # Configuration manager review and rollout record
 
-Date: 2026-11-07. Starting commit: `196bab3` (published v1.3.0). Release source version: `1.4.1`, a compatible MINOR release. Publication was explicitly authorized after the initial local review. No production server configuration has been changed.
+Date: 2026-11-07. The original 1.4.1 implementation record below starts at `196bab3` (published v1.3.0). The current 1.4.2 patch validation is recorded separately here. Publication was explicitly authorized. No production server configuration has been changed.
+
+## 1.4.2 patch review
+
+Starting release: v1.4.1, commit `23f4be2`. A literal dollar inside double quotes was incorrectly classified as shell expansion. The parser now distinguishes literal dollars from expansion syntax and reports only a safe basename, line and setting on failure. Real shell expressions are still refused. No user configuration was read, executed or rewritten to diagnose this issue; the exact contents of a reported production configuration are unknown.
+
+Installer/updater share one self-contained dependency provisioner in `install.sh`, so the standalone bootstrap also works when Git is missing. Missing dependencies, including dialog/age, are provisioned before application deployment. Existing configuration separation, default values, service hardening, storage/notification behavior and scheduled backup interfaces remain unchanged. No migration is needed. `--no-install-deps` supports managed/offline hosts. APT package changes are not transactional or rolled back; no general upgrade, repository modification or package removal is requested.
+
+Local Windows validation: **77 Python cases, 63 pass and 14 explicit Linux-only skips**; the Bash suite succeeds with its documented Linux-only branches skipped. ShellCheck 0.11, Bash syntax, Python compilation, whitespace and personal-reference checks pass. The six additional dependency tests/skips are the synthetic Bash comparison plus five root-Linux provisioning methods; the previous eight platform skips remain. Native Ubuntu CI is the release gate for every skipped case.
+
+New regressions cover safe literal dollars against real Bash, refusal of actual expansion, diagnostics without secret values, missing dialog/Git/age, opt-out versus missing core dependencies, idempotence, APT failure, no-TTY/help behavior, and lifecycle updates that stop before replacing binaries on provisioning failure. Every test APT call is mocked/intercepted; none installs packages or accesses a production server. The CI job's explicit environment-preparation step installs its normal Ubuntu test dependencies.
+
+Operator test: fetch the new tag and run its updater on an isolated host with dialog absent, confirm automatic provisioning, check both CLI versions, run offline validation and open the UI over SSH. Repeat with a representative private configuration containing literal special characters; cancellation must preserve its bytes. Genuine unsupported expressions should identify only the file/line/setting. Check APT repository failures before deployment and `--no-install-deps` on a pre-provisioned host. Then follow the environment-specific production acceptance steps below; live authentication, backup creation and remote tests remain opt-in.
 
 ## Architecture and compatibility review
 

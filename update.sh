@@ -2,12 +2,24 @@
 set -Eeuo pipefail
 umask 077
 
+INSTALL_DEPS=true
+while (($#)); do
+  case "$1" in
+    --no-install-deps) INSTALL_DEPS=false; shift ;;
+    -h|--help) echo 'Usage: sudo ./update.sh [--no-install-deps]'; echo 'Missing dependencies are provisioned through APT by default. Existing configuration is preserved.'; exit 0 ;;
+    *) echo 'Unknown updater option; use --help' >&2; exit 64 ;;
+  esac
+done
 die() { echo "unifi-os-backup updater: ERROR: $*" >&2; exit 1; }
 (( EUID == 0 )) || die "run as root (sudo ./update.sh)"
 for protected in /etc/unifi-backup /etc/unifi-backup/targets.d /etc/unifi-backup/.configure.lock /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /etc/unifi-backup/webhook.env /etc/unifi-backup/age-recipients.txt; do
   [[ ! -L $protected ]] || die "configuration symlink refused"
 done
 source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+[[ -f $source_dir/install.sh ]] || die "missing dependency provisioner: install.sh"
+dependency_options=(--dependencies-only)
+[[ $INSTALL_DEPS == true ]] || dependency_options+=(--no-install-deps)
+bash "$source_dir/install.sh" "${dependency_options[@]}"
 for file in bin/unifi-backup bin/unifi-mail-backup bin/unifi-backup-check bin/unifi-backup-upload bin/unifi-backup-notify bin/unifi-backup-status bin/unifi-backup-monitor bin/unifi-backup-catalog lib/unifi-backup-common.sh config/storage.env.example config/ntfy.env.example config/webhook.env.example config/age-recipients.txt.example systemd/unifi-backup.service systemd/unifi-backup.timer systemd/unifi-backup-monitor.service systemd/unifi-backup-monitor.timer; do
   [[ -f $source_dir/$file ]] || die "missing source file: $file"
 done
@@ -75,6 +87,6 @@ systemctl enable unifi-backup-monitor.timer >/dev/null 2>&1 || true
 systemctl try-restart unifi-backup-monitor.timer >/dev/null 2>&1 || true
 echo "Update installed. Configuration and backups were preserved."
 echo "Review CHANGELOG.md and merge new options from config/*.example as needed."
-echo "Optional configuration manager: sudo unifi-backup-configure (requires dialog only for the UI)."
+echo "Configuration manager: sudo unifi-backup-configure (dependencies were checked/provisioned)."
 echo "No migration or wizard is run by updating. Offline validation: sudo unifi-backup-configure --validate"
 echo "Then run: sudo unifi-backup-check --live && sudo systemctl start unifi-backup.service"

@@ -4,6 +4,19 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-07
+
+### Fixed
+
+- Accept literal dollar signs in double-quoted configuration values without permitting shell expansion. Errors identify the file basename, line and setting, never the value. Existing files are not rewritten or executed.
+- Automatically provision missing application dependencies, including dialog and age, through configured APT repositories during installation/update. This fixes the unavailable setup UI after an otherwise successful update.
+
+### Added
+
+- `--no-install-deps` for pre-provisioned/offline installation and update, and installer `--dependencies-only`. Provisioning errors return 69 before application deployment; already-satisfied dependencies do not invoke APT. No repository changes, distribution upgrades or package removals are requested.
+- Synthetic Bash/parser comparison, redacted diagnostics, mocked APT success/failure/idempotence/opt-out checks, and lifecycle-update provisioning regression coverage.
+- Updated bootstrap, upgrade, configuration and troubleshooting guides. Existing configuration, backups, service hardening and headless backup workflows are preserved; no wizard or migration runs automatically.
+
 ## [1.4.1] - 2026-11-07
 
 First published release of the 1.4 configuration manager. The immutable v1.4.0 source tag was created during validation but was not published as a GitHub Release; use v1.4.1, which adds final path-role protection.
