@@ -71,7 +71,11 @@ For a stable reproducible installation, select the published `v1.4.2` tag before
 ## Recommended first run on a test machine
 
 ```bash
-# If Git is unavailable, first use the inspected bootstrap above with --no-enable.
+wget -qO install.sh https://raw.githubusercontent.com/Laav/unifi-os-backup/v1.4.2/install.sh
+less install.sh
+chmod 0755 install.sh
+# Provision Git/UI/application dependencies without cloning or deploying files:
+sudo ./install.sh --dependencies-only
 sudo git clone --branch v1.4.2 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
 cd /opt/unifi-os-backup
 sudo ./install.sh --no-enable --configure

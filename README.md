@@ -37,8 +37,10 @@ The official UniFi OS Server currently documents Ubuntu 24.04 or later for its o
 wget -qO install.sh https://raw.githubusercontent.com/Laav/unifi-os-backup/v1.4.2/install.sh
 less install.sh
 chmod 0755 install.sh
-sudo ./install.sh --repository-url https://github.com/Laav/unifi-os-backup.git --configure
+sudo ./install.sh --dependencies-only
+sudo git clone --branch v1.4.2 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
 cd /opt/unifi-os-backup
+sudo ./install.sh --configure
 sudo unifi-backup-configure --validate
 # Explicit network test; does not create a backup:
 sudo unifi-backup-check --live
@@ -49,7 +51,7 @@ sudo systemctl start unifi-backup-monitor.timer
 
 The installer enables the timer but deliberately does not start it until configuration has been reviewed and a live login check succeeds. The default schedule is Sunday at 03:00 local time, with `Persistent=true`.
 
-Installer and updater install missing packages through the host's configured APT repositories; no separate `apt install` is needed. The bootstrap above clones the current default branch; use the pinned-checkout procedure in [INSTALL.md](docs/INSTALL.md#recommended-first-run-on-a-test-machine) for reproducible source. For unattended installation omit `--configure`; normal backups do not use `dialog`. Pre-provisioned/offline hosts can opt out with `--no-install-deps`. Existing installations can run `sudo ./update.sh` followed by `sudo unifi-backup-configure`. The updater never launches the wizard or migrates configuration automatically. For a non-mutating redacted view use `sudo unifi-backup-configure --inspect --json`.
+Installer and updater install missing packages through the host's configured APT repositories; no separate `apt install` is needed. The standalone `--dependencies-only` step also provisions Git before the pinned checkout is cloned. See [INSTALL.md](docs/INSTALL.md#recommended-first-run-on-a-test-machine) for a test installation with scheduling disabled and the alternative automatic-clone bootstrap. For unattended installation omit `--configure`; normal backups do not use `dialog`. Pre-provisioned/offline hosts can opt out with `--no-install-deps`. Existing installations can run `sudo ./update.sh` followed by `sudo unifi-backup-configure`. The updater never launches the wizard or migrates configuration automatically. For a non-mutating redacted view use `sudo unifi-backup-configure --inspect --json`.
 
 Read [the setup walkthrough](docs/CONFIGURE.md), [architecture audit](docs/CONFIGURATION-AUDIT.md), and [generated setting inventory](docs/CONFIGURATION-REFERENCE.md). Use arrows, Tab, Space and Enter; Back/Next navigate, Cancel discards unapplied edits, and Finish requires explicit confirmation. Live tests and timer activation remain separate opt-in actions.
 

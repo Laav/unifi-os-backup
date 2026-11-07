@@ -14,6 +14,8 @@ New regressions cover safe literal dollars against real Bash, refusal of actual 
 
 Operator test: fetch the new tag and run its updater on an isolated host with dialog absent, confirm automatic provisioning, check both CLI versions, run offline validation and open the UI over SSH. Repeat with a representative private configuration containing literal special characters; cancellation must preserve its bytes. Genuine unsupported expressions should identify only the file/line/setting. Check APT repository failures before deployment and `--no-install-deps` on a pre-provisioned host. Then follow the environment-specific production acceptance steps below; live authentication, backup creation and remote tests remain opt-in.
 
+Verified native evidence: [implementation CI](https://github.com/Laav/unifi-os-backup/actions/runs/42380772634) at `0bca30f`, then [standalone APT integration CI](https://github.com/Laav/unifi-os-backup/actions/runs/42380875849) at `4576a70`, both successful on **Ubuntu 22.04, 24.04 and 26.04**. Each version passes **all 77 Python tests without skips**, **all 16 Bash scripts**, real age/dialog, lifecycle preservation and failed-deployment checks, ShellCheck, systemd verification and installed 1.4.2 CLI/reference checks. The second run also confirms actual installation of both dialog and age via the copied standalone installer on all three versions. Final documentation/source and the immutable release tag receive separate CI before publication.
+
 ## Architecture and compatibility review
 
 - [Audit/findings](CONFIGURATION-AUDIT.md), [generated 124-row scoped inventory](CONFIGURATION-REFERENCE.md), [operator walkthrough](CONFIGURE.md).
