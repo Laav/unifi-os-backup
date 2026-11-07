@@ -69,14 +69,14 @@ The examples are copied only when the destination does not exist. Re-running `in
 
 Version 1.3 also installs `unifi-backup-verify`, `-replicate`, `-remote-verify`, `-retry`, `-storage-policy`, `-retention`, `-restore`, `-analyze` and `-diff`, the shared `lib/ub` Python modules, a protected `targets.d` example, and three optional timers. Verification/remote-verification/retry timers are not enabled or started by installation/update. Their config flags also default to false.
 
-For a stable reproducible installation, select the published `v1.4.0` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
+For a stable reproducible installation, select the published `v1.4.1` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
 
 ## Recommended first run on a test machine
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y git curl python3 coreutils findutils util-linux dialog
-sudo git clone --branch v1.4.0 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
+sudo git clone --branch v1.4.1 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
 cd /opt/unifi-os-backup
 sudo ./install.sh --no-enable --configure
 sudo unifi-backup-configure --validate --json

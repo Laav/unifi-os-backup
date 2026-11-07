@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 PROGRAM="unifi-backup"
-VERSION="1.4.0"
+VERSION="1.4.1"
 CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
 MODE="backup"
 

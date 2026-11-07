@@ -221,6 +221,31 @@ class ConfigurationCase(unittest.TestCase):
         model.set('main', 'BACKUP_TARGET_CONFIG_DIR', str(self.target_dir))
         self.assertIsNone(model.target_error)
 
+    def test_config_file_roles_cannot_alias_manager_or_engine_state(self):
+        for path in (self.root / '.configure.lock', self.root / '.configure-pending',
+                     self.root / '.configure-transactions' / 'graph.env', self.backups / 'operation.lock',
+                     self.backups / 'status.json', self.backups / 'catalog.json', self.root / 'recipients.txt', self.config):
+            with self.subTest(role_path=path.name):
+                model = self.model()
+                model.set('main', 'GRAPH_CONFIG_FILE', str(path))
+                with patch('config_model.shutil.which', return_value='available'):
+                    self.assertTrue(any(issue.category == 'security' and 'role' in issue.location for issue in model.validate()))
+                with self.assertRaises(Failure):
+                    model.plan()
+
+    def test_target_directory_and_moved_key_resources_remain_protected(self):
+        model = self.model()
+        model.set('main', 'BACKUP_TARGET_CONFIG_DIR', str(self.root / '.configure-transactions'))
+        self.assertTrue(model.role_issues())
+        with self.assertRaises(Failure):
+            model.plan()
+        model = self.model()
+        model.set('main', 'AGE_RECIPIENTS_FILE', str(self.root / 'new-recipients.txt'))
+        model.set('main', 'GRAPH_CONFIG_FILE', str(self.root / 'recipients.txt'))
+        self.assertTrue(model.role_issues())
+        with self.assertRaises(Failure):
+            model.plan()
+
     def test_redacted_review_and_export_never_include_secrets(self):
         model = self.model()
         model.set('main', 'UNIFI_PASSWORD', 'new-sensitive-only')

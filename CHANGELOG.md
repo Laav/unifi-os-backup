@@ -4,7 +4,9 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
-## [1.4.0] - 2026-11-07
+## [1.4.1] - 2026-11-07
+
+First published release of the 1.4 configuration manager. The immutable v1.4.0 source tag was created during validation but was not published as a GitHub Release; use v1.4.1, which adds final path-role protection.
 
 ### Added
 
@@ -24,6 +26,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ### Fixed
 
+- Managed configuration/key paths cannot alias each other or overwrite current/previous locks, state, catalogs or transaction journals. Unsafe paths are refused even for disabled integrations; separate their references before manager editing.
 - Installer/updater explicitly initialize executable and unit destination directories before deploying helpers, including on minimal installation trees.
 
 ## [1.3.0] - 2026-10-24

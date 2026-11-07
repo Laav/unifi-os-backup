@@ -4,7 +4,7 @@ Production-oriented Bash tooling that signs in to a local UniFi OS controlplane,
 
 Version 1.3 adds repeatable integrity verification, independent storage targets, persistent replication retries, provider immutability checks, GFS retention, recovery preparation, deterministic anomaly analysis, and a privacy-preserving configuration-export diff engine. Native opaque `.unifi` semantic parsing is explicitly unsupported; see [format capabilities](docs/CONFIG-DIFF.md).
 
-Version **1.4.0** adds one secure full-screen terminal configuration manager for all integrations: `sudo unifi-backup-configure`. Configuration remains in compatible external files; existing backups and automation do not need the wizard. Use the [tagged release](https://github.com/Laav/unifi-os-backup/releases/tag/v1.4.0) for a reproducible test installation.
+Version **1.4.1** adds one secure full-screen terminal configuration manager for all integrations: `sudo unifi-backup-configure`. Configuration remains in compatible external files; existing backups and automation do not need the wizard. Use the [tagged release](https://github.com/Laav/unifi-os-backup/releases/tag/v1.4.1) for a reproducible test installation.
 
 > [!IMPORTANT]
 > `POST /api/auth/login` and `GET /api/backup/download` are observed UniFi OS **controlplane endpoints**, not a documented stable public Ubiquiti API. UniFi upgrades can change or remove them. This project fails closed when authentication, status, type, size, or content differs from the expected behavior. Read [Endpoint compatibility](docs/TROUBLESHOOTING.md#endpoint-compatibility) before production use.
@@ -117,7 +117,7 @@ For a stable release checkout:
 ```bash
 git status --short
 sudo git fetch origin --tags
-sudo git switch --detach v1.4.0
+sudo git switch --detach v1.4.1
 sudo ./update.sh
 unifi-backup --version
 ```
@@ -138,7 +138,7 @@ See [SECURITY.md](SECURITY.md) for reporting and [docs/SECURITY.md](docs/SECURIT
 
 ## Project status
 
-Source version 1.4.0. GitHub tags/releases are authoritative for published versions. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
+Source version 1.4.1. GitHub tags/releases are authoritative for published versions. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
 
 ## License
 

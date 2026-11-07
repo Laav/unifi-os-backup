@@ -1,6 +1,6 @@
 # Configuration manager review and rollout record
 
-Date: 2026-11-07. Starting commit: `196bab3` (published v1.3.0). Release source version: `1.4.0`, a compatible MINOR release. Publication was explicitly authorized after the initial local review. No production server configuration has been changed.
+Date: 2026-11-07. Starting commit: `196bab3` (published v1.3.0). Release source version: `1.4.1`, a compatible MINOR release. Publication was explicitly authorized after the initial local review. No production server configuration has been changed.
 
 ## Architecture and compatibility review
 
@@ -12,7 +12,7 @@ Date: 2026-11-07. Starting commit: `196bab3` (published v1.3.0). Release source 
 
 ## Changed-file map
 
-Added: `bin/unifi-backup-configure`; `lib/ub/config_schema.py`, `config_files.py`, `config_model.py`, `config_transaction.py`, `config_ui.py`, `configure.py`; `tests/test-config-lock.sh`, `test_configure.py`, `test_configure_install.py`, `test_configure_tui.py`; `docs/CONFIGURATION-AUDIT.md`, `CONFIGURATION-REFERENCE.md`, `CONFIGURE.md`, this review record and `docs/releases/v1.4.0.md`.
+Added: `bin/unifi-backup-configure`; `lib/ub/config_schema.py`, `config_files.py`, `config_model.py`, `config_transaction.py`, `config_ui.py`, `configure.py`; `tests/test-config-lock.sh`, `test_configure.py`, `test_configure_install.py`, `test_configure_tui.py`; `docs/CONFIGURATION-AUDIT.md`, `CONFIGURATION-REFERENCE.md`, `CONFIGURE.md`, this review record and `docs/releases/v1.4.1.md`.
 
 Updated: `install.sh`, `update.sh`, `uninstall.sh`; shared Bash common/runtime libraries; main backup, mail, upload, notify and monitor readers; `lib/ub/cli.py` and `core.py`; metadata-version assertion; CI's optional dialog test dependency; `.gitignore`; README, CHANGELOG, CONTRIBUTING and configuration/install/upgrade/security/exit-code/troubleshooting/testing/releasing documentation.
 
@@ -23,7 +23,7 @@ Removed: no application files, configuration templates, backup data, integration
 Windows development host, working Python 3.14, Git Bash, ShellCheck 0.11 and a real age binary. The first baseline attempt used an incomplete Python installation on PATH and failed before application tests; rerunning with the working interpreter established a successful baseline. No machine-wide Python configuration was changed.
 
 - Baseline: original 25 Python cases (24 pass, 1 Windows symlink skip) and all original 15 Bash test scripts pass.
-- Final Python suite: 67 cases, 59 pass, 8 explicitly skipped on this Windows host.
+- Final Python suite: 69 cases, 61 pass, 8 explicitly skipped on this Windows host.
 - Final Bash suite: successful; original 15 scripts execute, the additional Linux-only configuration-flock script reports SKIP. The existing operation test's kernel-flock branch is also Linux-only.
 - Real age encryption/decryption tests pass locally with ephemeral test keys; the wizard itself never creates private keys.
 - ShellCheck, Bash syntax, Python compilation, generated-reference consistency and `git diff --check` pass.
@@ -39,6 +39,8 @@ After publication authorization, the implementation was pushed and tested by the
 - Real age, permissions/symlinks, generated systemd units/drop-ins, ShellCheck, installed help/version and installed generated-reference comparison pass.
 
 The first Linux run found an installation assumption: `/usr/local/sbin` was not initialized in the minimal lifecycle fixture. Installer/updater now explicitly create executable/unit destination directories before deploying helpers; the full matrix passed after this fix. No test was disabled to obtain that result. The final release source and annotated tag are additionally gated by CI before GitHub Release publication; consult their [Actions results](https://github.com/Laav/unifi-os-backup/actions).
+
+Before publication, two additional path-role tests reproduced unsafe references to configuration locks, state/catalog files, recipient/key files and transaction journals. Validation/planning now refuse these overlaps, including disabled integrations and references moved within a draft. This increases the suite to 69 cases. The previously created v1.4.0 tag remains immutable and has no published GitHub Release; v1.4.1 is the publication candidate containing this hardening. Its final-source/tag CI must pass separately before publication.
 
 CI runs on x86-64 Ubuntu containers, not real UniFi/cloud infrastructure or a human SSH session. Native ARM64 execution, a visual SSH walkthrough, provider IAM/SAS/WORM setup, real Graph/Auvik/notification delivery and an actual controller restore remain environment-specific acceptance checks. Passing a PTY test is not a claim that every terminal emulator/layout has been visually reviewed.
 

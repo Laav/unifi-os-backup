@@ -244,6 +244,34 @@ class Model:
             active += ['storage']
         return active
 
+    def role_issues(self):
+        """Configuration writes must never replace lock/state/key resources."""
+        issues, seen = [], {}
+        journal = self.config.parent / '.configure-transactions'
+        protected = {self.config.parent / '.configure.lock', self.config.parent / '.configure-pending',
+                     Path(self.main['LOCK_FILE']), Path(self.original_main['LOCK_FILE']),
+                     Path(self.main['STATUS_FILE']), Path(self.main['CATALOG_FILE']),
+                     Path(self.original_main['STATUS_FILE']), Path(self.original_main['CATALOG_FILE'])}
+        for key in ('AGE_RECIPIENTS_FILE', 'VERIFY_IDENTITY_FILE'):
+            previous = self.original_main[key]
+            if previous and previous != self.main[key]:
+                protected.add(Path(previous))
+        roles = list(self.paths.items()) + [('public recipients', Path(self.main['AGE_RECIPIENTS_FILE']))]
+        if self.main['VERIFY_IDENTITY_FILE']:
+            roles.append(('verification identity', Path(self.main['VERIFY_IDENTITY_FILE'])))
+        for name, path in roles:
+            if not path.is_absolute():
+                continue  # Normal scope/path validation reports this separately.
+            if path in protected or path == journal or journal in path.parents:
+                issues.append(Issue('security', 'file role: ' + name, 'Configuration/key path overlaps protected application state or transaction files.'))
+            if path in seen:
+                issues.append(Issue('security', 'file role: ' + name, 'Separate file roles must use distinct paths; shared with ' + seen[path] + '.'))
+            seen[path] = name
+        directory = Path(self.main['BACKUP_TARGET_CONFIG_DIR'])
+        if directory == journal or journal in directory.parents:
+            issues.append(Issue('security', 'file role: target directory', 'Target configurations cannot be stored inside the transaction journal.'))
+        return issues
+
     def scope_issues(self, name, filesystem=True):
         if name in self.errors:
             exc = self.errors[name]
@@ -297,7 +325,7 @@ class Model:
         name = 'target:' + identifier
         if name not in self.values:
             return [Issue('configuration', name, 'Unknown target')]
-        return self.scope_issues(name) + self.provider_issues(identifier, self.values[name])
+        return self.role_issues() + self.scope_issues(name) + self.provider_issues(identifier, self.values[name])
 
     def validate(self, filesystem=True):
         issues = []
@@ -311,6 +339,7 @@ class Model:
             return [Issue('security' if self.target_error.code == 77 else 'configuration', 'destinations', str(self.target_error))]
         if self.pending:
             problem('security', 'transaction', 'An interrupted transaction requires recovery before backups or further changes.')
+        issues.extend(self.role_issues())
         for name in active:
             issues.extend(self.scope_issues(name, filesystem))
         c = self.main
@@ -480,6 +509,8 @@ class Model:
 
     def plan(self):
         self.refresh()
+        if self.role_issues():
+            raise Failure('Unsafe configuration file-role overlap; separate configuration, state, key and journal paths before applying', 77)
         plan, seen = [], set()
         for name, doc in self.documents.items():
             values = self.values[name]

@@ -40,6 +40,8 @@ The manager understands UTF-8 comments, blank lines, `export NAME=literal`, sing
 
 Malformed/insecure **inactive** optional files are preserved with a warning and cannot be edited/enabled until fixed. An unsafe main file blocks safe inspection entirely. Missing optional files are created only when edited and applied. Existing custom file references remain in use; choose a new reference deliberately rather than expecting a merge/copy migration.
 
+Configuration, public recipients, private-identity references and operational state have separate file roles. References cannot alias another role, a lock, a status/catalog file or a transaction journal. These conflicts block manager planning even for disabled integrations, to prevent a later edit from overwriting another resource. Correct references explicitly; the existing manually configured engine is not rewritten automatically.
+
 ### Storage mode transitions
 
 Nonempty `BACKUP_TARGETS` continues to override legacy `REMOTE_STORAGE_TYPE`/`STORAGE_CONFIG_FILE`. Legacy remains supported and is not redundant for existing write-only single-target deployments. The UI offers legacy editing separately. It never converts its credentials into an active target.
