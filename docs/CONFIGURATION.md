@@ -1,6 +1,6 @@
 # Configuration
 
-The optional terminal manager is the preferred 1.4 development configuration experience:
+The optional terminal manager is the preferred configuration experience from version 1.4:
 
 ```bash
 sudo unifi-backup-configure

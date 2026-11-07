@@ -1,6 +1,6 @@
 # Configuration manager review and rollout record
 
-Date: 2026-11-07. Starting commit: `196bab3` (published v1.3.0). Prepared source version: `1.4.0-dev`, a prospective compatible MINOR release. This is a local review worktree, not a published release. No production server configuration has been changed.
+Date: 2026-11-07. Starting commit: `196bab3` (published v1.3.0). Release source version: `1.4.0`, a compatible MINOR release. Publication was explicitly authorized after the initial local review. No production server configuration has been changed.
 
 ## Architecture and compatibility review
 
@@ -12,13 +12,13 @@ Date: 2026-11-07. Starting commit: `196bab3` (published v1.3.0). Prepared source
 
 ## Changed-file map
 
-Added: `bin/unifi-backup-configure`; `lib/ub/config_schema.py`, `config_files.py`, `config_model.py`, `config_transaction.py`, `config_ui.py`, `configure.py`; `tests/test-config-lock.sh`, `test_configure.py`, `test_configure_install.py`, `test_configure_tui.py`; `docs/CONFIGURATION-AUDIT.md`, `CONFIGURATION-REFERENCE.md`, `CONFIGURE.md`, and this review record.
+Added: `bin/unifi-backup-configure`; `lib/ub/config_schema.py`, `config_files.py`, `config_model.py`, `config_transaction.py`, `config_ui.py`, `configure.py`; `tests/test-config-lock.sh`, `test_configure.py`, `test_configure_install.py`, `test_configure_tui.py`; `docs/CONFIGURATION-AUDIT.md`, `CONFIGURATION-REFERENCE.md`, `CONFIGURE.md`, this review record and `docs/releases/v1.4.0.md`.
 
 Updated: `install.sh`, `update.sh`, `uninstall.sh`; shared Bash common/runtime libraries; main backup, mail, upload, notify and monitor readers; `lib/ub/cli.py` and `core.py`; metadata-version assertion; CI's optional dialog test dependency; `.gitignore`; README, CHANGELOG, CONTRIBUTING and configuration/install/upgrade/security/exit-code/troubleshooting/testing/releasing documentation.
 
 Removed: no application files, configuration templates, backup data, integrations or packaged units. The duplicated manual configuration table is replaced by the generated reference.
 
-## Available local validation
+## Local and automated Linux validation
 
 Windows development host, working Python 3.14, Git Bash, ShellCheck 0.11 and a real age binary. The first baseline attempt used an incomplete Python installation on PATH and failed before application tests; rerunning with the working interpreter established a successful baseline. No machine-wide Python configuration was changed.
 
@@ -29,9 +29,18 @@ Windows development host, working Python 3.14, Git Bash, ShellCheck 0.11 and a r
 - ShellCheck, Bash syntax, Python compilation, generated-reference consistency and `git diff --check` pass.
 - Public-source guard and known-personal-reference scan pass. Tests use synthetic values and private temporary trees only.
 
-The eight Python skips are existing-engine symlink enforcement; configuration POSIX permissions/symlinks; protected POSIX/systemd path policy; actual systemd unit/drop-in verification; three real dialog pseudo-terminal tests; and actual lifecycle-script sandbox execution requiring the root Linux CI container.
+The eight local Python skips are existing-engine symlink enforcement; configuration POSIX permissions/symlinks; protected POSIX/systemd path policy; actual systemd unit/drop-in verification; three real dialog pseudo-terminal tests; and actual lifecycle-script sandbox execution requiring the root Linux CI container.
 
-Linux-only tests have been added to the existing Ubuntu 22.04/24.04/26.04 workflow, including optional dialog installation. **They have not been executed for this worktree locally or remotely.** No usable WSL/container Linux runtime is available here. No push was made to trigger CI; historical green runs are not claimed as validation of these changes. Full-screen appearance and native Linux behavior still require the acceptance run below.
+After publication authorization, the implementation was pushed and tested by the full Ubuntu 22.04/24.04/26.04 matrix. The [successful implementation CI run](https://github.com/Laav/unifi-os-backup/actions/runs/42376036010) validates commit `ab829a7`:
+
+- All **67 Python cases pass without skips on each Ubuntu version**, including all eight cases deferred on Windows.
+- All **16 Bash test scripts pass**, including actual kernel flock contention and pending-transaction reader refusal.
+- Real dialog PTYs test masked input, Escape and option-like values; fresh/repeated install, update, ordinary removal and purge execute in the private lifecycle sandbox.
+- Real age, permissions/symlinks, generated systemd units/drop-ins, ShellCheck, installed help/version and installed generated-reference comparison pass.
+
+The first Linux run found an installation assumption: `/usr/local/sbin` was not initialized in the minimal lifecycle fixture. Installer/updater now explicitly create executable/unit destination directories before deploying helpers; the full matrix passed after this fix. No test was disabled to obtain that result. The final release source and annotated tag are additionally gated by CI before GitHub Release publication; consult their [Actions results](https://github.com/Laav/unifi-os-backup/actions).
+
+CI runs on x86-64 Ubuntu containers, not real UniFi/cloud infrastructure or a human SSH session. Native ARM64 execution, a visual SSH walkthrough, provider IAM/SAS/WORM setup, real Graph/Auvik/notification delivery and an actual controller restore remain environment-specific acceptance checks. Passing a PTY test is not a claim that every terminal emulator/layout has been visually reviewed.
 
 ## Security/recovery review
 
@@ -48,4 +57,4 @@ Sensitive settings never appear in review/export values or dialog arguments. Exi
 5. Simulate a writer conflict, failed second replacement, termination and pending recovery. Confirm readers refuse pending state, rollback restores preimages and later edits are never overwritten. Preserve a private independent config/override backup before a rollout.
 6. Only with separate operator approval, test UniFi login, read-only provider access/capabilities and a deliberate ntfy/webhook test. Graph attachment delivery remains a separate explicit mailer test. Then create one deliberate backup, verify it and complete an isolated restore drill.
 
-Do not deploy directly to production based only on Windows/mock tests. Keep v1.3.0 available for an application rollback, finish/recover any pending transaction first, disable/remove the newer manager entry point when returning to old readers, and review owned overrides separately. Release/tag/push actions require separate authorization and passing Linux CI.
+Do not skip the environment-specific acceptance checks merely because automated tests pass. Keep v1.3.0 available for an application rollback, finish/recover any pending transaction first, disable/remove the newer manager entry point when returning to old readers, and review owned overrides separately. Publication follows the authorized release procedure and passing final-source/tag CI.

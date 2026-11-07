@@ -1,6 +1,6 @@
 # Terminal configuration manager
 
-The 1.4 development source adds `sudo unifi-backup-configure`: one full-screen management interface for the existing backup engine. It is not another backup engine and does not require consolidating all secrets into one file. The wizard is optional; existing env files, CLI commands and scheduled jobs continue to work without using it.
+Version 1.4 adds `sudo unifi-backup-configure`: one full-screen management interface for the existing backup engine. It is not another backup engine and does not require consolidating all secrets into one file. The wizard is optional; existing env files, CLI commands and scheduled jobs continue to work without using it.
 
 ## Requirements and quick start
 

@@ -13,7 +13,7 @@ import sys
 NAME = re.compile(r'^unifi_os_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.unifi(?:\.age)?$')
 OBJECT = re.compile(NAME.pattern[:-1] + r'(?:\.json)?$')
 SHA = re.compile(r'^[a-f0-9]{64}$')
-VERSION = '1.4.0-dev'
+VERSION = '1.4.0'
 
 
 def event(c, name, message, **fields):

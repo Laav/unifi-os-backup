@@ -2,10 +2,10 @@
 
 Every substantive release must also follow the permanent [RELEASING.md](RELEASING.md) procedure and README's **Versioning and releases** policy. Tags are immutable; a new release version is required for changed released code.
 
-The source tree is designed to be public, but the final GitHub owner/repository URL is environment-specific and cannot be inferred. Before the first public push:
+The canonical public repository is `Laav/unifi-os-backup`. Before a public push or release:
 
 1. Verify that every canonical repository URL points to `Laav/unifi-os-backup`.
-2. Initialize Git if needed and record executable modes:
+2. When bootstrapping a new repository only, initialize Git if needed. In an existing checkout never reinitialize or rewrite history; preserve executable modes:
 
    ```bash
    git init
@@ -17,7 +17,7 @@ The source tree is designed to be public, but the final GitHub owner/repository 
 
 3. Run `bash tests/run.sh` and ShellCheck on Ubuntu. Let the matrix CI pass on 22.04, 24.04, and 26.04.
 4. Review `git diff --cached`, `git status --ignored`, and the complete commit history for secrets. Automated secret scanning supplements but does not replace manual review.
-5. Confirm no `.unifi`, `.unifi.age`, `.env`, age identity, private key, certificate bundle containing a private key, cookie, token, internal hostname, tenant identifier, real mailbox, or customer data is tracked.
+5. Confirm no `.unifi`, `.unifi.age`, `.env`, age identity, private key, certificate bundle containing a private key, cookie, token, internal hostname, tenant identifier, real mailbox, customer data or private `.configure-transactions` journal is tracked. Configuration review/inspection output must remain redacted.
 6. Enable GitHub secret scanning, push protection, Dependabot/security alerts where applicable, private vulnerability reporting, branch protection, and required CI.
 7. Create a signed initial commit/tag when organizational tooling supports it. Publish SHA256 checksums for release archives through GitHub Releases and, ideally, an independently controlled channel.
 8. Download the public raw `install.sh` and a release/archive as an external user, inspect them, test bootstrap installation on a disposable Ubuntu host, then perform a restore drill with a non-production UniFi instance.

@@ -8,7 +8,7 @@
 - Network reachability to the HTTPS UniFi OS controlplane.
 - `age` only when optional encryption at rest is enabled.
 - Python's standard library is sufficient for the new data/storage helpers; no pip packages or cloud SDKs are needed.
-- The 1.4 development wizard optionally requires `dialog` and an interactive terminal. Backups, offline configuration validation and unattended installation do not.
+- The 1.4 wizard optionally requires `dialog` and an interactive terminal. Backups, offline configuration validation and unattended installation do not.
 
 On Ubuntu:
 
@@ -25,7 +25,7 @@ cd /opt/unifi-os-backup
 git status
 git log -1 --show-signature
 sudo ./install.sh
-# Optional in the reviewed 1.4 development tree, after installing dialog:
+# Optional from version 1.4, after installing dialog:
 # sudo ./install.sh --configure
 ```
 
@@ -69,11 +69,34 @@ The examples are copied only when the destination does not exist. Re-running `in
 
 Version 1.3 also installs `unifi-backup-verify`, `-replicate`, `-remote-verify`, `-retry`, `-storage-policy`, `-retention`, `-restore`, `-analyze` and `-diff`, the shared `lib/ub` Python modules, a protected `targets.d` example, and three optional timers. Verification/remote-verification/retry timers are not enabled or started by installation/update. Their config flags also default to false.
 
-For a stable reproducible installation, select the published `v1.3.0` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
+For a stable reproducible installation, select the published `v1.4.0` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
+
+## Recommended first run on a test machine
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git curl python3 coreutils findutils util-linux dialog
+sudo git clone --branch v1.4.0 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
+cd /opt/unifi-os-backup
+sudo ./install.sh --no-enable --configure
+sudo unifi-backup-configure --validate --json
+sudo unifi-backup-configure --inspect --json
+```
+
+This installs from a pinned release and leaves scheduling disabled. In the wizard, review each section and confirm Finish; Cancel does not apply a draft. Test data should use a dedicated service account and isolated storage/mail destinations. Only when ready, explicitly test login and create one backup:
+
+```bash
+sudo unifi-backup-check --live
+sudo systemctl start unifi-backup.service
+sudo journalctl -u unifi-backup.service -n 100 --no-pager
+sudo unifi-backup-verify --latest --json
+```
+
+Inspect effective drop-ins and complete a recovery drill before enabling timers. None of the commands above enables automatic scheduling; avoid the wizard's separate timer-activation action until acceptance is complete.
 
 ## Activate
 
-The 1.4 development source provides one terminal configuration interface:
+Version 1.4 provides one terminal configuration interface:
 
 ```bash
 sudo apt-get install dialog
@@ -81,7 +104,7 @@ sudo unifi-backup-configure --guided
 sudo unifi-backup-configure --validate
 ```
 
-See [CONFIGURE.md](CONFIGURE.md) for every section, existing installations, migration/rollback, schedules and safe live-test choices. `install.sh --configure` explicitly launches it; ordinary install and update never require it. The currently published v1.3.0 does not contain this new command; use the manual workflow below when installing that release. Referenced configuration and manager journals remain outside Git.
+See [CONFIGURE.md](CONFIGURE.md) for every section, existing installations, migration/rollback, schedules and safe live-test choices. `install.sh --configure` explicitly launches it; ordinary install and update never require it. Older v1.3.0 installations do not contain this new command; use the manual workflow below until updated. Referenced configuration and manager journals remain outside Git.
 
 ```bash
 sudoedit /etc/unifi-backup/unifi-backup.env

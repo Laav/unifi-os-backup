@@ -4,7 +4,7 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
-Target: compatible MINOR version 1.4.0; development commands report `1.4.0-dev`. No tag or release has been created for this change.
+## [1.4.0] - 2026-11-07
 
 ### Added
 
@@ -21,6 +21,10 @@ Target: compatible MINOR version 1.4.0; development commands report `1.4.0-dev`.
 - Installer offers `--configure`, while unattended installation and updating remain noninteractive and preserve existing configuration. No automatic storage migration or target activation.
 - Configuration management rejects symlinks, unsafe permissions and systemd-inaccessible/broad writable paths without weakening packaged hardening.
 - Legacy single-target configuration remains supported; switching storage modes requires an explicit choice, preventing dormant legacy reactivation.
+
+### Fixed
+
+- Installer/updater explicitly initialize executable and unit destination directories before deploying helpers, including on minimal installation trees.
 
 ## [1.3.0] - 2026-10-24
 

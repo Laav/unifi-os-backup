@@ -1,4 +1,4 @@
-# Configuration architecture audit (1.4 development)
+# Configuration architecture audit (1.4.0)
 
 ## Scope and baseline
 

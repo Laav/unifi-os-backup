@@ -1,8 +1,22 @@
 # Upgrading
 
-## Reviewed development update: 1.3.0 to 1.4.0-dev
+## Upgrade 1.3.0 to 1.4.0
 
-This is a compatible MINOR feature update prepared for review, not a published 1.4 tag/release. After checking out the reviewed changes, run `sudo ./update.sh`, then `unifi-backup --version` and `unifi-backup-configure --version` (both report 1.4.0-dev). No commit, tag or publication is required to review/test this tree.
+This is a compatible MINOR feature update. Pin the release instead of relying on an unreviewed moving branch:
+
+```bash
+cd /opt/unifi-os-backup
+git status --short
+sudo git fetch origin --tags
+sudo git switch --detach v1.4.0
+sudo ./update.sh
+unifi-backup --version
+unifi-backup-configure --version
+sudo unifi-backup-configure --inspect --json
+sudo unifi-backup-configure --validate --json
+```
+
+Review local changes before switching; do not force a checkout over them. Both version commands should report 1.4.0. The updater installs the checked-out source; it does not independently fetch/select a release. For a fresh test machine with no timers enabled, follow [INSTALL.md](INSTALL.md#recommended-first-run-on-a-test-machine).
 
 The updater preserves all existing env/recipient files, independent targets, backups, catalog and monitoring data. It installs the optional manager and pre-creates `.configure.lock` for read-only access by hardened services. Allow any jobs started by older binaries to finish before the first configuration transaction. No wizard, parser conversion, storage migration, timer activation or destructive operation is run automatically.
 
