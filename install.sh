@@ -76,6 +76,7 @@ for module in core verify storage replication retry_queue policy retention recov
   [[ -f $source_dir/lib/ub/$module.py ]] || die "Missing data module: $module" 66
 done
 bash -n "$source_dir/lib/unifi-backup-runtime.sh"
+install -d -o root -g root -m 0755 /usr/local/sbin /etc/systemd/system
 for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff configure; do
   [[ -f $source_dir/bin/unifi-backup-$helper ]] || die "Missing helper: $helper" 66
   bash -n "$source_dir/bin/unifi-backup-$helper"
