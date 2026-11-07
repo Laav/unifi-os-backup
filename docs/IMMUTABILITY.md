@@ -1,6 +1,8 @@
-# Immutability and GFS retention
+# Storage immutability
 
-Target defaults are `TARGET_IMMUTABILITY=none`. `check` requires existing provider protection; `request` requests protection only on newly created objects. `TARGET_LOCK_MODE` is `GOVERNANCE`/`COMPLIANCE` for S3 or `locked`/`unlocked` for Azure. `TARGET_LOCK_DAYS=30` specifies a horizon from artifact creation, not a new rolling extension on each retry. Permanent `COMPLIANCE` or Azure `locked` requests additionally require `TARGET_ALLOW_PERMANENT_LOCK=true`.
+[Documentation index](README.md) · [Multiple destinations](MULTI-TARGET.md) · [Local retention](RETENTION.md)
+
+Target defaults are `TARGET_IMMUTABILITY=none`. `check` requires existing provider protection; `request` requests protection only on newly created objects. `TARGET_LOCK_MODE` is `GOVERNANCE`/`COMPLIANCE` for S3 or `locked`/`unlocked` for Azure. `TARGET_LOCK_DAYS=30` specifies a horizon from artifact creation, not a new rolling extension on each retry. `COMPLIANCE` or Azure `locked` requests additionally require `TARGET_ALLOW_PERMANENT_LOCK=true`.
 
 No command enables bucket versioning, creates container policies, sets legal holds, shortens retention, bypasses governance, overwrites objects or deletes cloud data. Compliance/locked settings can be irreversible; provision and approve them administratively. S3 capability detection reads GetObjectLockConfiguration and GetBucketVersioning. Actual object protection is checked from HeadObject retention headers. Azure checks container properties and blob properties; a version-level request can be attempted explicitly, but success is only recorded after blob headers confirm the mode and future retention horizon. Legal-hold state is reported, never set automatically.
 
@@ -15,6 +17,4 @@ Required permissions include S3 GetObjectRetention/GetObjectLegalHold/GetBucketV
 
 ## Local grandfather-father-son policy
 
-Legacy age/count/minimum remains the default. Opt in with `RETENTION_MODE=gfs` and `GFS_DAILY=14`, `GFS_WEEKLY=8`, `GFS_MONTHLY=12`, `GFS_YEARLY=3`. The newest backup per distinct UTC filename period is kept for each tier; tiers form a union, plus the existing minimum floor and pending-retry pins. At least one tier must be nonzero. Encryption does not change selection. Remote lifecycle is always independently administered and must not expire objects before required immutability/operational retention.
-
-`unifi-backup-retention --dry-run --json` lists every keep/delete decision and tier. It never deletes anything in dry-run. Real retention validates all selected file/sidecar pairs before deletion. Pending tasks may exceed normal counts; dead-letter exhaustion explicitly releases their pins.
+Local GFS selection, age/count policies, minimum floors and retry pins are documented in [RETENTION.md](RETENTION.md). Configure remote lifecycle independently so it does not expire objects before required immutability or recovery windows. Preview local selection with `sudo unifi-backup-retention --dry-run --json` before applying changes.

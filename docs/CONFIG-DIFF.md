@@ -1,6 +1,8 @@
 # Configuration diffs and format capability
 
-The tested local `.unifi` sample has no recognized ZIP/GZIP/age envelope. Ubiquiti's [backup documentation](https://help.ui.com/hc/en-us/articles/360008976393-Backups-and-Migration-in-UniFi) describes backup and UI restore but provides no stable public native container/extraction contract. This release therefore does **not** claim native `.unifi` or embedded `.unf` semantic parsing. It fails with exit 69 (`unsupported`) when a hash-bound normalized export is absent. No encryption keys or format guesses are embedded.
+[Documentation index](README.md) · [Metadata](METADATA.md) · [Anomaly analysis](ANOMALIES.md)
+
+The diff engine compares explicit normalized exports. It does **not** implement semantic extraction from native `.unifi` or embedded `.unf` data. Ubiquiti's [backup documentation](https://help.ui.com/hc/en-us/articles/360008976393-Backups-and-Migration-in-UniFi) describes backup and UI restore without establishing a stable native extraction contract for this tool. A managed backup without a hash-bound normalized export fails with exit 69 (`unsupported`). No encryption keys or speculative extraction rules are embedded.
 
 `unifi-backup-diff --old FILE --new FILE`, `--latest-two`, or `--backup-id-old ID --backup-id-new ID` compares explicit normalized configuration snapshots. An independently reviewed exporter can place a root-only `<backup-filename>.config.json` companion beside a backup:
 

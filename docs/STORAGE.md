@@ -1,6 +1,12 @@
 # Remote object storage
 
-Version 1.3 adds multiple destinations and a shared provider interface for upload, download, HEAD, listing, byte verification and policy inspection. See [MULTI-TARGET.md](MULTI-TARGET.md), [RETRIES.md](RETRIES.md), [IMMUTABILITY.md](IMMUTABILITY.md) and [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md). The legacy single-target configuration below retains its original write-only upload behavior; a nonempty `BACKUP_TARGETS` supersedes it without duplicate uploads.
+[Documentation index](README.md) · [Multiple destinations](MULTI-TARGET.md) · [Remote verification/retries](RETRIES.md)
+
+Configure destinations through `sudo unifi-backup-configure`. Independent targets support Azure Blob, S3-compatible storage and mounted filesystems; the shared cloud providers also support read/list, verification and policy inspection when permissions allow them. See [MULTI-TARGET.md](MULTI-TARGET.md), [IMMUTABILITY.md](IMMUTABILITY.md) and [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md).
+
+## Legacy single-target configuration
+
+The settings below describe the retained single-target uploader. A nonempty `BACKUP_TARGETS` supersedes it without duplicate uploads. Use independent targets for multiple destinations or per-target requirements; migration is explicit and does not copy credentials automatically.
 
 Remote storage is optional. A validated local backup is always completed first and is never deleted because an upload fails. Set one backend in `/etc/unifi-backup/unifi-backup.env`:
 
@@ -16,12 +22,9 @@ The backup object is uploaded first. Its final `.unifi.json` metadata sidecar is
 
 ## Azure Blob Storage
 
-Copy and protect the example:
+Installation creates a protected placeholder file only if it is absent. Edit the existing file privately; copying an example over it would overwrite credentials:
 
 ```bash
-sudo install -o root -g root -m 0600 \
-  /opt/unifi-os-backup/config/storage.env.example \
-  /etc/unifi-backup/storage.env
 sudoedit /etc/unifi-backup/storage.env
 ```
 
@@ -33,7 +36,7 @@ AZURE_BLOB_SAS_TOKEN="REPLACE_WITH_SAS_QUERY_STRING"
 AZURE_BLOB_PREFIX="production/controller-01"
 ```
 
-Use a short-lived, container-scoped **user delegation SAS** where operationally possible. Grant only the create/write permissions required by `Put Blob`, use HTTPS, set an expiry, and rotate it. Microsoft recommends Microsoft Entra authorization over account keys; this initial implementation supports SAS so it also works from a non-Azure Linux server without an Azure SDK. It never accepts a storage account key.
+Use a short-lived, container-scoped **user delegation SAS** where operationally possible. Grant only the create/write permissions required by `Put Blob`, use HTTPS, set an expiry, and rotate it. Microsoft recommends Microsoft Entra authorization over account keys; this implementation supports SAS so it also works from a non-Azure Linux server without an Azure SDK. It never accepts a storage account key.
 
 Azure receives:
 
@@ -61,7 +64,7 @@ S3_PATH_STYLE="true"
 
 `S3_PATH_STYLE=true` is appropriate for MinIO and many compatible services. Set it to `false` only when the provider requires virtual-host style and the bucket name is valid in DNS.
 
-The least-privilege policy normally needs `s3:PutObject` only for the selected prefix. The tool does not list or delete remote objects. A conceptual AWS policy is:
+For this legacy upload-only workflow, the policy normally needs `s3:PutObject` for the selected prefix. The legacy uploader does not list/delete objects. Independent-target discovery, verification and protection checks need additional read/list/policy permissions; review them separately. No workflow deletes remote objects. A conceptual upload-only AWS policy is:
 
 ```json
 {

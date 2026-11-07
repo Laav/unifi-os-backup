@@ -1,25 +1,24 @@
-# Publishing checklist
+# Public-source publication checklist
 
-Every substantive release must also follow the permanent [RELEASING.md](RELEASING.md) procedure and README's **Versioning and releases** policy. Tags are immutable; a new release version is required for changed released code.
+[Documentation index](README.md) · [Contributing](../CONTRIBUTING.md) · [Release procedure](RELEASING.md)
 
-The canonical public repository is `Laav/unifi-os-backup`. Before a public push or release:
+Use this checklist before pushing public source. For a software release, also complete the permanent [RELEASING.md](RELEASING.md) procedure. Editorial documentation commits follow normal review and may be pushed without changing versions or creating tags/releases.
 
-1. Verify that every canonical repository URL points to `Laav/unifi-os-backup`.
-2. When bootstrapping a new repository only, initialize Git if needed. In an existing checkout never reinitialize or rewrite history; preserve executable modes:
+## Review source and identity
 
-   ```bash
-   git init
-   git add .
-   git update-index --chmod=+x install.sh update.sh uninstall.sh
-   git update-index --chmod=+x bin/*
-   git update-index --chmod=+x tests/run.sh tests/test-*.sh tests/fixtures/mock-*
-   ```
+1. Confirm the intended checkout, branch and canonical origin: `Laav/unifi-os-backup`. Preserve unrelated work and history; do not reinitialize or force-reset an existing repository.
+2. Review the intended diff, staged files, ignored paths and relevant history for secrets/personal data. Never upload real backups, email exports, configuration, journals, cookies, private identities, tenant IDs, mailboxes or internal hostnames.
+3. Keep examples synthetic and validate screenshots separately. A public-source scanner is useful but does not replace human review. Credentials found in committed history must be revoked/rotated; deleting the current file is insufficient.
+4. Use a suitable public commit identity and retain LF endings/executable Git modes. Inspect modes with `git ls-files --stage`; do not broadly stage ignored/private files to fix a test.
 
-3. Run `bash tests/run.sh` and ShellCheck on Ubuntu. Let the matrix CI pass on 22.04, 24.04, and 26.04.
-4. Review `git diff --cached`, `git status --ignored`, and the complete commit history for secrets. Automated secret scanning supplements but does not replace manual review.
-5. Confirm no `.unifi`, `.unifi.age`, `.env`, age identity, private key, certificate bundle containing a private key, cookie, token, internal hostname, tenant identifier, real mailbox, customer data or private `.configure-transactions` journal is tracked. Configuration review/inspection output must remain redacted.
-6. Enable GitHub secret scanning, push protection, Dependabot/security alerts where applicable, private vulnerability reporting, branch protection, and required CI.
-7. Create a signed initial commit/tag when organizational tooling supports it. Publish SHA256 checksums for release archives through GitHub Releases and, ideally, an independently controlled channel.
-8. Download the public raw `install.sh` and a release/archive as an external user, inspect them, test bootstrap installation on a disposable Ubuntu host, then perform a restore drill with a non-production UniFi instance.
+## Validate and push
 
-Do not add secrets to fix an example or test. If a secret ever enters a commit, revoke/rotate it immediately; deleting the working-tree file is not enough because Git history and forks may retain it.
+Run the checks appropriate to the change from [TESTING.md](TESTING.md). Documentation checks include links/anchors, examples, configuration-reference consistency and whitespace/privacy review. Software releases require the full local/native Ubuntu matrix, including systemd and security regressions.
+
+Commit only intended changes and push through the authorized branch/PR workflow. Verify the exact remote commit and its CI results. Do not infer tag/release authorization from permission to update documentation. Do not modify a published tag or old release archive to include newer edits.
+
+## Release-specific checks
+
+For an authorized software release, use a new SemVer, factual release notes, an immutable annotated tag and passing final-source/tag CI. Review public raw installer/archive contents, installation on disposable Ubuntu and an isolated restore drill. Do not claim live integrations were tested when only fixtures/mocks ran.
+
+Where repository settings and organizational tooling permit, enable secret scanning/push protection, security alerts, private vulnerability reporting, branch protection and required CI. Use trusted signatures and independently distributed checksums when available; an annotated tag alone is not a signature. Generated GitHub source archives are sufficient release artifacts; never attach operational data.

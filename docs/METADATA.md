@@ -1,5 +1,7 @@
 # Backup metadata
 
+[Documentation index](README.md) · [Catalog](CATALOG.md) · [Verification](VERIFICATION.md)
+
 Every completed backup has a root-owned mode-0600 JSON sidecar:
 
 ```text
@@ -24,10 +26,12 @@ The schema records:
 
 No username, password, cookie, CSRF value, SAS, S3 key, Graph credential/token, mailbox, ntfy topic/token, or authorization header is written.
 
-When Graph email is enabled, the message body includes the backup ID, encryption state, and remote-backup status, and the JSON sidecar is attached alongside the `.unifi` or `.unifi.age` file. The sidecar attached to a successfully accepted message reports email success. When remote storage is enabled, the final sidecar is uploaded after the email step.
+When Graph email is enabled, the message body includes the backup ID, encryption state and remote-backup status, and the JSON sidecar is attached alongside the `.unifi` or `.unifi.age` file. An accepted message's sidecar reports email success, meaning Graph API acceptance rather than confirmed delivery.
+
+The legacy single-target uploader publishes its final sidecar after the email step. Independent destinations publish identity snapshots during replication; later operational annotations stay local instead of overwriting existing remote objects.
 
 The consolidated inventory in `/var/lib/unifi-backup/catalog.json` is documented in [CATALOG.md](CATALOG.md).
 
 Metadata improves inventory and integrity checks but does not prove authenticity by itself. Protect it with the backup, and store hashes or signed manifests in a separately controlled system when tamper evidence is required.
 
-Version 1.3 adds measured stage timings and a `replication` object with per-target status, verification, duration and confirmed immutability. These are additive schema-1 fields. Provider metadata sidecars are immutable identity snapshots; later operational results live in the local sidecar/state/catalog, without overwriting cloud objects. Local byte validity, replication policy and manual restore tests are never collapsed into one boolean.
+Metadata also records measured stage timings and a `replication` object with per-target status, verification, duration and confirmed immutability. These are additive schema-1 fields. Provider metadata sidecars are immutable identity snapshots; later operational results live in the local sidecar/state/catalog, without overwriting cloud objects. Local byte validity, replication policy and manual restore tests remain separate results.

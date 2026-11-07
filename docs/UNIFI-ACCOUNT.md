@@ -1,5 +1,7 @@
 # Dedicated UniFi service account
 
+[Documentation index](README.md) · [Configuration wizard](CONFIGURE.md) · [Endpoint compatibility](TROUBLESHOOTING.md#endpoint-compatibility)
+
 Use a separate local administrative identity named `uni-bck` by default. Do not reuse an owner's personal account, a daily administrator account, or an account whose unattended login conflicts with MFA policy.
 
 ## Create it

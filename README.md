@@ -1,37 +1,45 @@
-# UniFi OS System Backup for Linux
+# UniFi OS Backup
 
-Production-oriented Bash tooling that signs in to a local UniFi OS controlplane, downloads and validates a full System Config Backup, stores it atomically, calculates SHA256, writes metadata and a central catalog, applies defensive retention, exports freshness monitoring, and can replicate to Azure Blob or S3-compatible storage. Optional integrations include age encryption at rest, Microsoft Graph mail, ntfy, and signed generic HTTPS webhooks.
+[![Release](https://img.shields.io/github/v/release/Laav/unifi-os-backup?label=release)](https://github.com/Laav/unifi-os-backup/releases/latest)
+[![CI](https://github.com/Laav/unifi-os-backup/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Laav/unifi-os-backup/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Version 1.3 adds repeatable integrity verification, independent storage targets, persistent replication retries, provider immutability checks, GFS retention, recovery preparation, deterministic anomaly analysis, and a privacy-preserving configuration-export diff engine. Native opaque `.unifi` semantic parsing is explicitly unsupported; see [format capabilities](docs/CONFIG-DIFF.md).
+Automate UniFi OS System Config Backups on Linux. Create and validate a local backup, protect it with optional encryption, replicate it to independent destinations, and monitor whether a usable backup is available when needed.
 
-Version **1.4.2** fixes literal-dollar parsing and automatically provisions missing dependencies during installation/update, including `dialog` for the full-screen configuration manager: `sudo unifi-backup-configure`. Configuration remains in compatible external files; existing backups and automation do not need the wizard. Use the [tagged release](https://github.com/Laav/unifi-os-backup/releases/tag/v1.4.2) for a reproducible test installation.
+Manage the installation through one full-screen terminal configuration interface, including over SSH. The backup engine uses Bash, curl, Python's standard library and systemd; it requires no desktop, Docker, cloud SDK or Python package installation.
+
+**Start here:** [Installation](docs/INSTALL.md) · [Configuration wizard](docs/CONFIGURE.md) · [Documentation](docs/README.md) · [Latest release](https://github.com/Laav/unifi-os-backup/releases/latest)
 
 > [!IMPORTANT]
-> `POST /api/auth/login` and `GET /api/backup/download` are observed UniFi OS **controlplane endpoints**, not a documented stable public Ubiquiti API. UniFi upgrades can change or remove them. This project fails closed when authentication, status, type, size, or content differs from the expected behavior. Read [Endpoint compatibility](docs/TROUBLESHOOTING.md#endpoint-compatibility) before production use.
+> This project uses observed UniFi OS controlplane endpoints, including `POST /api/auth/login` and `GET /api/backup/download`. They are not a guaranteed stable public API and can change after a UniFi upgrade. Test both login and backup creation after upgrading UniFi. See [endpoint compatibility](docs/TROUBLESHOOTING.md#endpoint-compatibility).
 
-## Properties
+## Capabilities
 
-- TLS verification is mandatory; private CAs use `curl --cacert`.
-- Credentials, cookies, Graph tokens, and attachments never appear as command-line values or log content.
-- Login JSON is generated with Python `json.dumps`, so quotes, newlines, and special characters are handled correctly.
-- Downloads land in a mode-0600 temporary file in the destination filesystem and become visible only after validation and an atomic `mv`.
-- Retention combines age, maximum count, and a minimum safety floor, and only considers exact managed filenames.
-- Each backup has a mode-0600 JSON metadata sidecar; Graph mail includes the metadata in its body and as an attachment.
-- Optional age recipient encryption publishes `.unifi.age` while keeping the private recovery identity off the backup host.
-- Azure Blob and S3-compatible uploads are optional, never delete the local copy, and never receive delete permission from this tool.
-- Machine-readable JSON logs, stale-backup SLA checks, a central catalog, Prometheus textfile metrics, and an SNMP/Auvik pattern are included.
-- ntfy and generic HTTPS webhooks support failure, recovery, stale, and optional success notifications.
-- `flock` prevents concurrent runs.
-- The systemd service is hardened while retaining the filesystem and network access the job needs.
-- Configuration and backup data live outside Git under `/etc/unifi-backup` and `/var/backups/unifi`.
+| Area | What it provides |
+|---|---|
+| Backup creation | Dedicated local UniFi account, validated downloads, atomic publication, SHA256 and JSON metadata |
+| Configuration | Guided setup, categorized editing, masked secrets, offline validation and reviewed configuration transactions |
+| Local protection | Private backup files, age encryption, age/count/minimum retention and optional GFS policies |
+| Replication | Azure Blob, S3-compatible and filesystem destinations, independent required targets and persistent retries |
+| Verification and recovery | Local and remote integrity checks, a backup catalog and verified staging for manual restoration |
+| Monitoring | Freshness detection, structured logs, exit codes, Prometheus metrics and SNMP/Auvik integration patterns |
+| Notifications | Optional Microsoft Graph backup email, ntfy and signed generic HTTPS webhooks |
+| Analysis | Deterministic anomaly detection and redacted diffs of explicitly supplied normalized configuration exports |
 
-## Supported platform
+All installations retain a local backup. Optional integrations remain disabled until configured. Native `.unifi` semantic extraction is unsupported; [configuration diffs](docs/CONFIG-DIFF.md) require a separate supported export.
 
-Ubuntu Server 22.04, 24.04, and 26.04 on x86-64 or ARM64. The repository's CI definition runs the userspace test suite in all three Ubuntu releases. The scripts are architecture-neutral; UniFi OS endpoint compatibility must still be revalidated after each UniFi upgrade. At publication time, Ubiquiti documents its own Linux UniFi OS Server runtime as x86-64, while this backup client can run independently on ARM64.
+## Supported environment
 
-The official UniFi OS Server currently documents Ubuntu 24.04 or later for its own server runtime. This backup client can run on a separate Ubuntu 22.04 host.
+- Ubuntu Server 22.04, 24.04 and 26.04 with systemd.
+- The complete CI suite runs in x86-64 Ubuntu containers for all three releases. The client scripts are architecture-neutral; native ARM64 execution remains an operator acceptance check.
+- Root privileges for installation, configuration and backup operations.
+- HTTPS access to the UniFi OS controlplane and any enabled integrations.
 
-## Quick start
+The backup client can run on a separate host from UniFi OS Server. Check UniFi OS Server's own platform requirements independently.
+
+## Install and configure
+
+The example below pins a published release and leaves automatic scheduling disabled during setup. Review the [latest release](https://github.com/Laav/unifi-os-backup/releases/latest) before selecting a version.
 
 ```bash
 wget -qO install.sh https://raw.githubusercontent.com/Laav/unifi-os-backup/v1.4.2/install.sh
@@ -40,108 +48,80 @@ chmod 0755 install.sh
 sudo ./install.sh --dependencies-only
 sudo git clone --branch v1.4.2 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
 cd /opt/unifi-os-backup
-sudo ./install.sh --configure
-sudo unifi-backup-configure --validate
-# Explicit network test; does not create a backup:
-sudo unifi-backup-check --live
-sudo systemctl start unifi-backup.service
-sudo systemctl start unifi-backup.timer
-sudo systemctl start unifi-backup-monitor.timer
+sudo ./install.sh --no-enable --configure
 ```
 
-The installer enables the timer but deliberately does not start it until configuration has been reviewed and a live login check succeeds. The default schedule is Sunday at 03:00 local time, with `Persistent=true`.
+Installer and updater automatically provision missing dependencies through the host's configured APT repositories, including Git, dialog and age. No separate `apt install` step is required. Existing configuration and backups are preserved. Offline or centrally managed hosts can opt out with `--no-install-deps`.
 
-Installer and updater install missing packages through the host's configured APT repositories; no separate `apt install` is needed. The standalone `--dependencies-only` step also provisions Git before the pinned checkout is cloned. See [INSTALL.md](docs/INSTALL.md#recommended-first-run-on-a-test-machine) for a test installation with scheduling disabled and the alternative automatic-clone bootstrap. For unattended installation omit `--configure`; normal backups do not use `dialog`. Pre-provisioned/offline hosts can opt out with `--no-install-deps`. Existing installations can run `sudo ./update.sh` followed by `sudo unifi-backup-configure`. The updater never launches the wizard or migrates configuration automatically. For a non-mutating redacted view use `sudo unifi-backup-configure --inspect --json`.
+Use a [dedicated local UniFi account](docs/UNIFI-ACCOUNT.md), named `uni-bck` by default, with the narrowest tested permissions that can create a System Config Backup. Enter credentials through the wizard; configuration remains outside Git under `/etc/unifi-backup`.
 
-Read [the setup walkthrough](docs/CONFIGURE.md), [architecture audit](docs/CONFIGURATION-AUDIT.md), and [generated setting inventory](docs/CONFIGURATION-REFERENCE.md). Use arrows, Tab, Space and Enter; Back/Next navigate, Cancel discards unapplied edits, and Finish requires explicit confirmation. Live tests and timer activation remain separate opt-in actions.
+The wizard supports keyboard navigation, Back/Next, Cancel and explicit Review/Finish. It requires an interactive terminal; unattended installation and ordinary backups do not. See [the setup walkthrough](docs/CONFIGURE.md) for existing installations, custom paths and all integrations.
 
-The automated validation results and required environment-specific acceptance checks are recorded in [CONFIGURATION-VALIDATION.md](docs/CONFIGURATION-VALIDATION.md). Passing automated tests is not a claim that real UniFi restores, provider permissions or message delivery have been validated in your environment.
+## Verify the first backup
 
-See [INSTALL.md](docs/INSTALL.md) for bootstrap installation, [UNIFI-ACCOUNT.md](docs/UNIFI-ACCOUNT.md) for the service identity, and [CONFIGURATION.md](docs/CONFIGURATION.md) for every setting. Optional integrations are documented in [ENCRYPTION.md](docs/ENCRYPTION.md), [STORAGE.md](docs/STORAGE.md), [MICROSOFT-GRAPH.md](docs/MICROSOFT-GRAPH.md), [NOTIFICATIONS.md](docs/NOTIFICATIONS.md), [WEBHOOKS.md](docs/WEBHOOKS.md), and [MONITORING.md](docs/MONITORING.md). See [CATALOG.md](docs/CATALOG.md) for the inventory schema.
-
-Repository maintainers should complete [PUBLISHING.md](docs/PUBLISHING.md), including the privacy review and executable Git-mode checks, before publishing a release.
-
-## Dedicated UniFi account
-
-Create a dedicated local UniFi admin named `uni-bck` (the name is configurable). Use local/unattended credentials because a cloud account with interactive MFA is unsuitable for this job. Grant the narrowest role that can create/download a System Config Backup in your installed UniFi OS release. Ubiquiti does not document a stable fine-grained API permission for this endpoint; use Super Admin only if a tested lower role cannot perform the operation. Never use this identity for routine administration. See the step-by-step [service-account guide](docs/UNIFI-ACCOUNT.md).
-
-Ubiquiti's current UI guidance places local admins under the local Network/Control Plane administration UI; labels vary by release. Validate the account by signing in locally and by running `sudo unifi-backup-check --live`.
-
-## Normal operation
+After reviewing and applying configuration, explicitly validate, test login and create a backup:
 
 ```bash
+sudo unifi-backup-configure --validate
+sudo unifi-backup-check --live
 sudo systemctl start unifi-backup.service
-sudo journalctl -u unifi-backup.service --since today
-systemctl list-timers unifi-backup.timer
-sudo unifi-backup-status
-sudo cat /var/lib/unifi-backup/catalog.json
-sudo sha256sum /var/backups/unifi/unifi_os_backup_*.unifi*
+sudo journalctl -u unifi-backup.service --since "10 minutes ago" --no-pager
+sudo unifi-backup-verify --latest --json
 ```
 
-Success is logged with the file path, byte size, SHA256, backup ID, and metadata path. Passwords, cookies, CSRF values, SAS values, S3 secret keys, access tokens, authorization headers, and client secrets are never logged.
+The live login check does not create a backup. Service progress appears in journald; a successful oneshot service normally returns to `inactive`. Verify the backup and perform an isolated restore drill before enabling scheduling.
 
-## Updating
+When ready, activate the backup and freshness timers:
+
+```bash
+sudo systemctl enable --now unifi-backup.timer unifi-backup-monitor.timer
+systemctl list-timers 'unifi-backup*'
+```
+
+The backup timer defaults to Sunday at 03:00 in the host's local timezone. `Persistent=true` can trigger an overdue job when a timer is activated. Configure daily, weekly or custom calendars through the wizard. Additional verification/retry timers require separate opt-in; see [operations](docs/OPERATIONS.md).
+
+## Day-to-day administration
+
+```bash
+sudo unifi-backup-configure
+sudo unifi-backup-configure --inspect --json
+unifi-backup-status --format json
+sudo unifi-backup-retention --dry-run --json
+sudo unifi-backup-restore --list --json
+```
+
+Use the [operations guide](docs/OPERATIONS.md) for schedules, logs, service results and routine checks. Use [troubleshooting](docs/TROUBLESHOOTING.md) for validation errors, endpoint failures or missing notifications. A complete [documentation index](docs/README.md) covers storage, monitoring, encryption and recovery.
+
+## Updates
+
+Select a reviewed published tag, then run its updater:
 
 ```bash
 cd /opt/unifi-os-backup
-sudo git pull --ff-only
-sudo ./update.sh
-```
-
-`update.sh` never replaces existing configuration and never changes backups. It may create newly introduced optional configuration files with fictitious placeholders. Review [UPGRADING.md](docs/UPGRADING.md) and merge new main-config options explicitly.
-
-## Verification and recovery
-
-```bash
-sudo unifi-backup-verify --latest --json
-sudo unifi-backup-remote-verify --latest --full --target s3-primary --json
-sudo unifi-backup-retry --json
-sudo unifi-backup-retention --dry-run --json
-sudo unifi-backup-storage-policy --check --target s3-primary --json
-sudo unifi-backup-restore --list --json
-sudo unifi-backup-restore --target s3-primary --latest --output /secure/restore
-sudo unifi-backup-analyze --latest --explain
-sudo unifi-backup-diff --latest-two --summary
-```
-
-Read [VERIFICATION.md](docs/VERIFICATION.md), [MULTI-TARGET.md](docs/MULTI-TARGET.md), [RETRIES.md](docs/RETRIES.md), [IMMUTABILITY.md](docs/IMMUTABILITY.md), [DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md), [ANOMALIES.md](docs/ANOMALIES.md), and [CONFIG-DIFF.md](docs/CONFIG-DIFF.md) before enabling the associated automation. New verify/remote-verify/retry timers are installed disabled. Local creation, byte integrity, replication, immutability, anomalies and actual restore testing are separate outcomes.
-
-## Versioning and releases
-
-Every substantive user-facing release requires a new Semantic Versioning version, updated changelog, annotated immutable tag, passing local/CI checks and a published GitHub Release. New compatible features use a MINOR increment; compatible fixes use PATCH; actual breaking changes use MAJOR. Editorial-only changes need no release.
-
-Published tags must never be moved or overwritten, and different code must never replace an existing version. Correct a faulty release with a new version and an explicit advisory/release note. The permanent maintainer procedure is [docs/RELEASING.md](docs/RELEASING.md).
-
-Git tags and published GitHub Releases on the intended origin are authoritative for published versions; README/changelog entries alone do not establish a release. `unifi-backup --version` reports the installed source version.
-
-For a stable release checkout:
-
-```bash
 git status --short
 sudo git fetch origin --tags
 sudo git switch --detach v1.4.2
 sudo ./update.sh
-unifi-backup --version
+sudo unifi-backup-configure --validate
 ```
 
-The updater installs the currently checked-out source; it does not silently select or download a release. The original `git pull --ff-only` workflow remains available on `main`.
+The tag above is an explicit example; choose the release you intend to deploy. Review local changes before switching. The updater installs the checked-out source and preserves configuration and backup data. It does not fetch a release, launch the wizard or migrate storage automatically. Branch-based installations can use `git pull --ff-only` on `main`; see [upgrading and rollback](docs/UPGRADING.md).
 
-## Security model and limitations
+Release history belongs in [CHANGELOG.md](CHANGELOG.md) and [GitHub Releases](https://github.com/Laav/unifi-os-backup/releases). `unifi-backup --version` reports the installed software version; documentation on `main` can be newer than a tagged release.
 
-- Backups contain sensitive system configuration. Protect the host, directory, mail route, and recipients accordingly.
-- With age enabled, plaintext exists temporarily during download/encryption. Use encrypted host storage when transient data and deleted blocks must also be protected.
-- A size/hash check proves transfer consistency, not semantic restorability. Schedule restore tests on a non-production UniFi instance.
-- Graph's simple JSON `sendMail` route is intentionally limited to files below 2,800,000 bytes by default. Larger backups remain local and make the service fail clearly.
-- Email is transport, not an ideal backup vault. Prefer encrypted, access-controlled storage for large or long-term copies.
-- Remote object storage is not a substitute for access control, lifecycle rules, immutability, restore testing, and provider-side encryption.
-- The project does not disable TLS verification and contains no `--insecure` escape hatch.
+## Security and recovery boundaries
 
-See [SECURITY.md](SECURITY.md) for reporting and [docs/SECURITY.md](docs/SECURITY.md) for the threat model.
+- Configuration directories use root ownership and mode 0700; secret files and backups use mode 0600. Keep credentials, backups, private recovery identities and configuration journals outside Git.
+- TLS validation is mandatory. Use a trusted private CA when needed; insecure TLS is unsupported.
+- age encryption uses public recipients on the backup host. Keep recovery identities independently protected. Plaintext exists temporarily during download/encryption; use encrypted host storage when transient data must also be protected.
+- SHA256 verifies consistency. It does not prove authenticity or that UniFi can restore a file. Protect metadata independently and schedule real restore drills.
+- Remote storage needs its own permission, lifecycle and immutability controls. This tool does not delete remote backups or manage provider account permissions.
+- Graph attachments have a conservative size ceiling. Oversized files remain local, and HTTP 202 means Graph accepted a message rather than confirmed delivery.
 
-## Project status
+Read the [security design](docs/SECURITY.md), [recovery guide](docs/DISASTER-RECOVERY.md) and [validation boundaries](docs/TESTING.md) before production rollout. Report vulnerabilities through the process in [SECURITY.md](SECURITY.md).
 
-Source version 1.4.2. GitHub tags/releases are authoritative for published versions. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
+## Contributing and license
 
-## License
+See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and documentation conventions, and [RELEASING.md](docs/RELEASING.md) for versioning and publication policy. Editorial documentation changes do not require a software release. Published tags remain immutable.
 
-[MIT](LICENSE)
+Licensed under the [MIT License](LICENSE). This is an independent community project, unaffiliated with Ubiquiti, Microsoft, Amazon Web Services, Auvik, age or ntfy.

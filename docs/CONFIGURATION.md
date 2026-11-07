@@ -1,6 +1,8 @@
 # Configuration
 
-The optional terminal manager is the preferred configuration experience from version 1.4:
+[Documentation index](README.md) · [Configuration wizard](CONFIGURE.md) · [Field reference](CONFIGURATION-REFERENCE.md)
+
+Use the terminal manager to configure the existing backup engine through one interface:
 
 ```bash
 sudo unifi-backup-configure

@@ -1,12 +1,30 @@
 # Troubleshooting
 
+[Documentation index](README.md) · [Operations](OPERATIONS.md) · [Exit codes](EXIT-CODES.md)
+
+## Start with the last run
+
+```bash
+sudo journalctl -u unifi-backup.service --since "10 minutes ago" --no-pager
+sudo systemctl show unifi-backup.service -p ActiveState -p SubState -p Result -p ExecMainStatus
+unifi-backup-status --format json
+```
+
+`systemctl start` does not stream normal job progress. A successful oneshot normally becomes inactive after finishing; use `Result` and `ExecMainStatus` together with the complete journal. Login success alone does not confirm that a backup was created. A successful local backup can still be followed by an integration failure.
+
+For missing email, first confirm `Backup successful`, then inspect later Graph events and any earlier failure that stopped the workflow. Confirm email is enabled through the wizard or a private editor. HTTP 202 confirms API acceptance, not delivery; see [Graph failures](#graph-failures). Never post configuration contents or raw HTTP response bodies to diagnose a failure.
+
 ## Configuration manager
 
-From version 1.4 use `sudo unifi-backup-configure --validate --json` or a non-mutating `--inspect`. The full wizard requires dialog, a real TTY and at least 60x18; use `ssh -t` when needed. Installer/updater 1.4.2 automatically provision missing dependencies; rerun the current updater if dialog is missing. Check its APT errors and configured repositories/network access if provisioning fails. `--no-install-deps` explicitly disables this behavior. Unsupported shell expressions are deliberately refused rather than executed. Insecure ownership/modes and symlinks must be corrected explicitly.
+Use `sudo unifi-backup-configure --validate --json` or a non-mutating `--inspect`. The full wizard requires dialog, a real TTY and at least 60x18; use `ssh -t` when needed. Installer/updater automatically provision missing dependencies; rerun the reviewed current updater if dialog is missing. Check its APT errors and configured repositories/network access if provisioning fails. `--no-install-deps` explicitly disables this behavior. Unsupported shell expressions are deliberately refused rather than executed. Insecure ownership/modes and symlinks must be corrected explicitly.
+
+### Systemd override warning
+
+`Existing administrator drop-ins are retained` is a general reminder emitted by the validator, including when no conflicting administrator override was detected. Warnings alone return 0; JSON output reports `valid: true` when there are no errors. Do not remove overrides to silence this reminder. Inspect the effective units/calendars after deliberately changing paths or schedules.
 
 ### Shell expansion is unsupported
 
-1.4.1 incorrectly refused even literal dollar signs inside double quotes. Upgrade to 1.4.2 for literal-dollar support. Genuine shell expansion such as `$VARIABLE`, `${VARIABLE}` or `$(command)` remains unsupported by the manager, even if the legacy Bash reader accepts it. The new diagnostic identifies the file basename, line and setting without printing its value. Inspect that location locally using `sudoedit`; preserve the intended value using a literal assignment. Single quotes preserve literal dollars; the manager's serializer safely handles embedded quotes. Never post complete env files, password lines or secret-bearing diffs for troubleshooting. Validation and update do not rewrite these files or execute their contents.
+Genuine shell expansion such as `$VARIABLE`, `${VARIABLE}` or `$(command)` is unsupported by the manager, even if a legacy Bash reader accepts it. Literal dollars are supported; if an older installation rejects them, follow [UPGRADING.md](UPGRADING.md). Diagnostics identify the file basename, line and setting without printing its value. Inspect that location locally using `sudoedit`; preserve the intended effective value using a literal assignment. Single quotes preserve literal dollars; the manager's serializer safely handles embedded quotes. Never post complete env files, password lines or secret-bearing diffs for troubleshooting. Validation and update do not rewrite these files or execute their contents.
 
 An active configuration lock returns 75; wait and reload instead of deleting the lock inode. An interrupted multi-file apply leaves a private pending marker and blocks updated readers: use `sudo unifi-backup-configure --recover --yes` with the same `--config` path. Never remove the marker to bypass recovery. Custom schedules require `systemd-analyze`, and custom directories must be compatible with the hardened units. See [CONFIGURE.md](CONFIGURE.md) for rollback, overrides and explicit timer activation.
 
@@ -18,7 +36,7 @@ The repository uses:
 - `GET /api/backup/download`
 - best-effort `POST /api/auth/logout`
 
-These are local UniFi OS controlplane endpoints observed in current deployments; Ubiquiti's public documentation explains UI-based System Config Backup download but does not promise this API contract. They are not the documented UniFi Network Integration API. No speculative fallback endpoint is attempted.
+These are observed local UniFi OS controlplane endpoints; Ubiquiti's public documentation explains UI-based System Config Backup download but does not promise this API contract. They are not the documented UniFi Network Integration API. No speculative fallback endpoint is attempted.
 
 Before and after every UniFi OS upgrade:
 
@@ -59,7 +77,7 @@ Ubiquiti references:
 
 ## systemd sandbox denial
 
-For a custom `BACKUP_DIR`, match `ReadWritePaths` as documented in [CONFIGURATION.md](CONFIGURATION.md#custom-backup-directory). Inspect denials with:
+For a custom `BACKUP_DIR`, review `ReadWritePaths` as documented in [CONFIGURATION.md](CONFIGURATION.md#paths-and-systemd). The wizard prepares narrow drop-ins; review manual overrides across all affected workers. Inspect denials with:
 
 ```bash
 sudo journalctl -u unifi-backup.service -b
@@ -80,7 +98,7 @@ The software logs sanitized Graph error code/message only, never the token or se
 
 ## Intermittent error-like backup response
 
-A successful login does not guarantee that the subsequent unsupported backup endpoint will immediately return a backup. A real incident showed an HTML/JSON-like response on one run and a valid `.unifi` response a few minutes later. When `BACKUP_DOWNLOAD_RETRIES` is greater than zero, the current version waits `BACKUP_RETRY_DELAY`, performs a fresh login, and retries only a bounded number of times.
+A successful login does not guarantee that the subsequent unsupported backup endpoint immediately returns a backup. An error-like response can be transient or indicate changed endpoint behavior. When `BACKUP_DOWNLOAD_RETRIES` is greater than zero, the workflow waits `BACKUP_RETRY_DELAY`, performs a fresh login and retries only a bounded number of times.
 
 The response is never published as a backup, retained, attached, or uploaded. Because Graph mail happens only after successful backup validation, no success email is sent for such a failed run. The status file, Prometheus metrics, JSON event, systemd exit code, and optional ntfy/webhook failure notification record the failure instead.
 
@@ -97,7 +115,7 @@ If all attempts fail, do not increase retries indefinitely. Check UniFi health a
 
 ## Encryption and catalog
 
-- `age: command not found`: install the reviewed Ubuntu `age` package before enabling encryption.
+- `age: command not found`: rerun the reviewed current installer/updater with automatic dependency provisioning enabled before enabling encryption.
 - `AGE_RECIPIENTS_FILE contains no supported public recipient`: replace the placeholder with a native age recipient or supported SSH public recipient.
 - Private identity rejected: this is intentional; keep the identity on a separate recovery system.
 - Encryption failure: no encrypted artifact is published and the plaintext temporary file is removed by cleanup; inspect sanitized age output and recipient compatibility.

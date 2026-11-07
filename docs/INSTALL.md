@@ -1,126 +1,118 @@
 # Installation
 
-## Prerequisites
+[Documentation index](README.md) · [Configuration wizard](CONFIGURE.md) · [Operations](OPERATIONS.md)
 
-- Ubuntu Server 22.04, 24.04, or 26.04.
-- Bash 4+, curl, Python 3, systemd, `sha256sum`, `find`, `stat`, `mktemp`, and `flock`.
-- Root access for installation and production execution.
-- Network reachability to the HTTPS UniFi OS controlplane.
-- `age` only when optional encryption at rest is enabled.
-- Python's standard library is sufficient for the new data/storage helpers; no pip packages or cloud SDKs are needed.
-- The 1.4 wizard requires `dialog` and an interactive terminal. Backups, offline configuration validation and unattended installation do not require a terminal.
+## Prerequisites and dependency provisioning
 
-From 1.4.2, installer and updater automatically install missing dependencies from configured APT repositories, including Git, CA certificates, `dialog` and `age`. No manual package-install step is required. The system must already use systemd and have working APT repositories/network access. If Git is absent, use the bootstrap download below with the system's existing wget or curl.
+Use Ubuntu Server 22.04, 24.04 or 26.04 with systemd, root access and HTTPS connectivity to the UniFi OS controlplane. The backup client can run separately from UniFi OS Server. It uses Bash, curl, Python's standard library and standard Linux utilities; no pip packages, cloud SDKs or desktop environment are needed.
 
-Use `--no-install-deps` for offline or centrally provisioned hosts. Missing core dependencies then fail with exit 69; missing dialog/age warn and leave those features unavailable. `--configure` still requires dialog. `sudo ./install.sh --dependencies-only` checks/provisions packages without deploying application/configuration files. When all dependencies are available, APT is not invoked. Package installation uses noninteractive APT with `--no-install-recommends`, `--no-remove` and `--no-upgrade`; there is no distribution upgrade or repository modification. APT can install/adjust transitive dependencies, and package changes are not rolled back if provisioning fails. Application deployment stops on provisioning failure.
+Installer and updater check for missing dependencies and provision them through configured APT repositories, including Git, CA certificates, dialog and age. No manual package-install step is required. APT repositories and their trust configuration must already work. An unsupported init system is not replaced.
 
-## Preferred: inspect a Git checkout
+| Option | Behavior |
+|---|---|
+| `--configure` | Installer opens the wizard after deployment; requires an interactive terminal |
+| `--no-enable` | Installer does not enable the backup or monitor timers; use for an initial test installation |
+| `--dependencies-only` | Installer checks/provisions packages without cloning or deploying application/configuration files |
+| `--no-install-deps` | Installer/updater skip APT for offline or pre-provisioned systems |
 
-```bash
-sudo git clone https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
-cd /opt/unifi-os-backup
-git status
-git log -1 --show-signature
-sudo ./install.sh
-# Optional from version 1.4; dependencies are provisioned automatically:
-# sudo ./install.sh --configure
-```
+With the explicit dependency opt-out, missing core tools fail with exit 69; missing dialog/age warn and leave their features unavailable. `--configure` still requires dialog. Ordinary installation, update and scheduled backups never require a TTY.
 
-Pinning a release tag or verified commit is preferable to installing an unreviewed moving branch.
-
-## Bootstrap download
-
-Download and inspect the installer; do not pipe remote code directly into a root shell:
-
-```bash
-wget -qO install.sh https://raw.githubusercontent.com/Laav/unifi-os-backup/main/install.sh
-less install.sh
-chmod 0755 install.sh
-sudo ./install.sh --repository-url https://github.com/Laav/unifi-os-backup.git
-```
-
-The standalone installer provisions missing Git/application dependencies, clones into `/opt/unifi-os-backup`, then installs from that checkout. Bootstrap selects the current default branch. For stronger supply-chain assurance, download a tagged release, compare a checksum published through an independent trusted channel, verify any available trusted signature, and inspect the diff before running it. Dependencies use the host's existing APT trust/repository policy. Do not disable repository signature verification to work around provisioning failures.
-
-`curl ... | sudo bash` is not recommended: it removes the inspection step and can execute a truncated, redirected, or newly replaced response immediately as root.
-
-## Installed paths
-
-| Path | Mode | Purpose |
-|---|---:|---|
-| `/usr/local/sbin/unifi-backup` | 0755 | Backup workflow |
-| `/usr/local/sbin/unifi-mail-backup` | 0755 | Optional Graph mailer |
-| `/usr/local/sbin/unifi-backup-check` | 0755 | Configuration/live check |
-| `/usr/local/sbin/unifi-backup-upload` | 0755 | Optional Azure Blob/S3 uploader |
-| `/usr/local/sbin/unifi-backup-notify` | 0755 | Optional ntfy/generic-webhook publisher |
-| `/usr/local/sbin/unifi-backup-status` | 0755 | Monitoring output for RMM/SNMP/Prometheus |
-| `/usr/local/sbin/unifi-backup-monitor` | 0755 | Hourly freshness/SLA transition evaluator |
-| `/usr/local/sbin/unifi-backup-catalog` | 0755 | Atomic machine-readable inventory builder |
-| `/usr/local/lib/unifi-backup/common.sh` | 0644 | Shared structured logging helpers |
-| `/etc/unifi-backup/` | 0700 | Configuration directory |
-| `/etc/unifi-backup/*.env` | 0600 | Root-owned secrets |
-| `/var/backups/unifi/` | 0700 | Backups |
-| `/var/lib/unifi-backup/` | 0755 | Non-secret status and Prometheus metrics |
-| `/etc/systemd/system/unifi-backup*` | 0644 | Backup and freshness-monitor units/timers |
-
-The examples are copied only when the destination does not exist. Re-running `install.sh` preserves configuration and backups.
-
-Version 1.3 also installs `unifi-backup-verify`, `-replicate`, `-remote-verify`, `-retry`, `-storage-policy`, `-retention`, `-restore`, `-analyze` and `-diff`, the shared `lib/ub` Python modules, a protected `targets.d` example, and three optional timers. Verification/remote-verification/retry timers are not enabled or started by installation/update. Their config flags also default to false.
-
-For a stable reproducible installation, select the published `v1.4.2` tag before running the installer. See [UPGRADING.md](UPGRADING.md) and [RELEASING.md](RELEASING.md).
+APT runs only when dependencies are missing. Provisioning uses noninteractive installation with `--no-install-recommends`, `--no-remove` and `--no-upgrade`. It requests no distribution upgrade or repository changes. APT can adjust transitive dependencies; package changes are not transactional or rolled back. Provisioning failure stops application deployment with exit 69.
 
 ## Recommended first run on a test machine
+
+Choose a reviewed [published release](https://github.com/Laav/unifi-os-backup/releases/latest). The following example pins `v1.4.2`; substitute the same reviewed tag in both download and clone commands when selecting another release.
 
 ```bash
 wget -qO install.sh https://raw.githubusercontent.com/Laav/unifi-os-backup/v1.4.2/install.sh
 less install.sh
 chmod 0755 install.sh
-# Provision Git/UI/application dependencies without cloning or deploying files:
 sudo ./install.sh --dependencies-only
 sudo git clone --branch v1.4.2 --depth 1 https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
 cd /opt/unifi-os-backup
+git log -1 --show-signature
 sudo ./install.sh --no-enable --configure
+```
+
+The initial standalone step provisions Git and other dependencies without creating a checkout. Installation then uses the pinned checkout. If Git is already available, start with the clone command; the installer still provisions other missing dependencies.
+
+Use the host's existing curl instead of wget if preferred:
+
+```bash
+curl --fail --silent --show-error --output install.sh \
+  https://raw.githubusercontent.com/Laav/unifi-os-backup/v1.4.2/install.sh
+```
+
+Inspect downloaded code before running it. Validate any available independently trusted checksum/signature; do not assume an annotated tag is signed. Avoid `curl ... | sudo bash`, which removes the inspection step.
+
+Only use this procedure for a fresh checkout path. For an existing installation use [UPGRADING.md](UPGRADING.md); do not clone over an existing directory. `--no-enable` leaves fresh timers disabled and does not deactivate already running timers on a reused installation.
+
+## Configure and validate
+
+Create the [dedicated UniFi account](UNIFI-ACCOUNT.md), then complete the [guided setup](CONFIGURE.md). Enter the HTTPS origin, local account credentials, local destination and any desired integrations. Review every change before Finish. Cancel leaves the draft unapplied.
+
+After an unattended installation, launch configuration separately:
+
+```bash
+sudo unifi-backup-configure --guided
 sudo unifi-backup-configure --validate --json
 sudo unifi-backup-configure --inspect --json
 ```
 
-This installs from a pinned release and leaves scheduling disabled. In the wizard, review each section and confirm Finish; Cancel does not apply a draft. Test data should use a dedicated service account and isolated storage/mail destinations. Only when ready, explicitly test login and create one backup:
+For unattended deployment omit `--configure`. Existing manually managed files remain supported; see [CONFIGURATION.md](CONFIGURATION.md) for ownership, literal assignment syntax and the generated field reference. Installation/update create examples only when their destinations are absent and never overwrite existing credentials.
+
+## First backup and activation
+
+Use a dedicated test account and isolated storage/notification destinations. Explicitly test login, create one backup and verify it:
 
 ```bash
 sudo unifi-backup-check --live
 sudo systemctl start unifi-backup.service
-sudo journalctl -u unifi-backup.service -n 100 --no-pager
+sudo journalctl -u unifi-backup.service --since "10 minutes ago" --no-pager
 sudo unifi-backup-verify --latest --json
 ```
 
-Inspect effective drop-ins and complete a recovery drill before enabling timers. None of the commands above enables automatic scheduling; avoid the wizard's separate timer-activation action until acceptance is complete.
-
-## Activate
-
-Version 1.4 provides one terminal configuration interface:
+Login success does not verify the download endpoint. Integrity success does not prove application-level restorability. Complete an isolated [recovery drill](DISASTER-RECOVERY.md), inspect effective systemd drop-ins and review schedule/freshness thresholds before enabling scheduling.
 
 ```bash
-sudo unifi-backup-configure --guided
-sudo unifi-backup-configure --validate
+sudo systemctl enable --now unifi-backup.timer unifi-backup-monitor.timer
+systemctl list-timers 'unifi-backup*'
 ```
 
-See [CONFIGURE.md](CONFIGURE.md) for every section, existing installations, migration/rollback, schedules and safe live-test choices. `install.sh --configure` explicitly launches it; ordinary install and update never require it. Older v1.3.0 installations do not contain this new command; use the manual workflow below until updated. Referenced configuration and manager journals remain outside Git.
+The default backup is Sunday at 03:00 local time. A persistent timer can start an overdue job immediately on activation. The wizard also has explicit timer actions; avoid them until acceptance is complete. Verification, remote-verification and retry timers are installed separately and remain opt-in. See [OPERATIONS.md](OPERATIONS.md).
+
+## Alternative: automatic-clone bootstrap
+
+For an inspected default-branch installation, download the standalone installer and let it provision Git and clone the repository:
 
 ```bash
-sudoedit /etc/unifi-backup/unifi-backup.env
-sudo chown -R root:root /etc/unifi-backup
-sudo chmod 0700 /etc/unifi-backup
-sudo chmod 0600 /etc/unifi-backup/*.env
-sudo chmod 0600 /etc/unifi-backup/age-recipients.txt
-sudo unifi-backup-check --live
-sudo systemctl start unifi-backup.service
-sudo systemctl start unifi-backup.timer
-sudo systemctl start unifi-backup-monitor.timer
+wget -qO install.sh https://raw.githubusercontent.com/Laav/unifi-os-backup/main/install.sh
+less install.sh
+chmod 0755 install.sh
+sudo ./install.sh --repository-url https://github.com/Laav/unifi-os-backup.git --no-enable
 ```
 
-Check `systemctl status` and `journalctl -u unifi-backup.service` after the first real run.
+This selects the current default branch, even if the bootstrap script itself came from a tag. Use the pinned-checkout procedure above when reproducible source selection is required. Existing configuration remains external to the checkout.
 
-## Uninstall
+## Installed layout
 
-`sudo ./uninstall.sh` removes programs and units but preserves secrets, monitoring state, and backups. `sudo ./uninstall.sh --purge` also permanently deletes `/etc/unifi-backup`, `/var/lib/unifi-backup`, and `/var/backups/unifi`; inspect and copy important backups first.
+| Path | Purpose and permissions |
+|---|---|
+| `/opt/unifi-os-backup/` | Source checkout used for installation and updates |
+| `/usr/local/sbin/unifi-backup*` | Installed CLI programs, root-owned mode 0755 |
+| `/usr/local/sbin/unifi-mail-backup` | Optional Graph mailer, root-owned mode 0755 |
+| `/usr/local/lib/unifi-backup/` | Shared Bash/Python modules, root-owned code |
+| `/etc/unifi-backup/` | Private configuration directory, root:root mode 0700 |
+| `/etc/unifi-backup/*.env` | Main/integration files, root:root mode 0600 |
+| `/etc/unifi-backup/targets.d/` | Private per-target configuration, directory 0700 and files 0600 |
+| `/var/backups/unifi/` | Default private backup directory, directory 0700 and artifacts 0600 |
+| `/var/lib/unifi-backup/` | Operational state, private catalog/reports and readable monitoring outputs; directory 0755 |
+| `/etc/systemd/system/unifi-backup*` | Installed units/timers and reviewed drop-ins |
 
-Ordinary removal also retains manager-owned drop-ins and private configuration rollback journals. Purge removes only exact manager-owned drop-ins with their expected header, preserving other administrator overrides. External custom configuration/backup paths are not purged automatically.
+Shared logging is installed as `/usr/local/lib/unifi-backup/common.sh`. Individual state-file visibility is documented in [MONITORING.md](MONITORING.md); a readable state directory does not make every file public. Custom paths and administrator drop-ins remain supported.
+
+## Removal
+
+From the source checkout, `sudo ./uninstall.sh` removes application programs/units while retaining configuration, backups, state, manager-owned drop-ins and private transaction journals. It does not uninstall APT packages.
+
+`sudo ./uninstall.sh --purge` permanently removes the default `/etc/unifi-backup`, `/var/lib/unifi-backup` and `/var/backups/unifi` trees. Preserve verified independent copies first. Purge removes only recognized manager-owned drop-ins and retains other administrator overrides. External custom configuration and backup paths are not purged automatically.

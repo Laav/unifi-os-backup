@@ -1,6 +1,8 @@
 # Terminal configuration manager
 
-Version 1.4 adds `sudo unifi-backup-configure`: one full-screen management interface for the existing backup engine. It is not another backup engine and does not require consolidating all secrets into one file. The wizard is optional; existing env files, CLI commands and scheduled jobs continue to work without using it.
+[Documentation index](README.md) · [Installation](INSTALL.md) · [Configuration reference](CONFIGURATION-REFERENCE.md)
+
+`sudo unifi-backup-configure` provides one full-screen management interface for the backup engine and its integrations. It keeps separate secret files and per-target configuration where their independent lifecycles require them. The wizard is optional; manually maintained files and scheduled jobs remain supported.
 
 ## Requirements and quick start
 
@@ -13,7 +15,7 @@ sudo unifi-backup-configure
 sudo unifi-backup-configure --guided
 ```
 
-From 1.4.2, installation/update automatically provisions missing `dialog` and other application dependencies using APT. `--no-install-deps` opts out for pre-provisioned/offline systems. No package installation happens during the wizard, validation or scheduled backups.
+Installation/update automatically provisions missing `dialog` and other application dependencies using APT. `--no-install-deps` opts out for pre-provisioned/offline systems. No package installation happens during the wizard, validation or scheduled backups.
 
 For SSH automation do not invoke the wizard. For an interactive remote session use `ssh -t HOST`, then run it there. Terminal, scrollback and session recording are security boundaries: never record secret entry. Passwords/tokens use an empty, non-echoing password box; existing values are never prefilled. Blank keeps an existing sensitive value; clearing requires a separate explicit action. Login passwords containing special characters/multiline literals are preserved and serialized safely; the single-line UI is not a multiline secret editor.
 
@@ -24,7 +26,7 @@ Keyboard navigation: arrows select, Tab/Shift-Tab move between controls, Space t
 1. Create the dedicated local UniFi service account as described in [UNIFI-ACCOUNT.md](UNIFI-ACCOUNT.md).
 2. Run the guided wizard. Enter the HTTPS origin/port, username, masked password and optional trusted CA chain. There is no insecure TLS option.
 3. Choose the private local directory, request timeouts/retries, daily/weekly/custom systemd schedule and legacy or GFS retention. Schedule changes are validated by `systemd-analyze calendar`.
-4. Keep encryption disabled or configure existing **public** age/SSH recipients. Install age before enabling it. The wizard never generates, writes, displays or exports private recovery identities. Independently secure and restore-test the recovery keys.
+4. Keep encryption disabled or configure existing **public** age/SSH recipients. Confirm age is available; installer/updater provision it unless dependency installation was explicitly disabled. The wizard never generates, writes, displays or exports private recovery identities. Independently secure and restore-test the recovery keys.
 5. Keep local-only storage, or add independent Azure Blob, S3 or private mounted-filesystem targets. New targets are initially disabled. Enter protected provider settings, optional/required status, verification level and any explicit immutability request; then explicitly enable the target. Retry limits are installation-wide; the remote success quorum excludes local storage.
 6. Enable only required notifications and configure their separate files. Disabled integrations are not required. Graph needs Mail.Send application consent and mailbox scoping; the wizard does not send or expose attachments. See [MICROSOFT-GRAPH.md](MICROSOFT-GRAPH.md).
 7. Review categorized old/new values (sensitive values hidden), changed/new files, narrow systemd drop-ins, directory creation, dependencies, errors and warnings. Finish explicitly writes the transaction; a failed validation writes no configuration.
@@ -104,7 +106,7 @@ For an independent configuration backup, stop configuration writes and use your 
 ## Troubleshooting and rollout checklist
 
 - No TTY/TERM: open an interactive terminal (`ssh -t`) or use offline commands.
-- Missing dialog: rerun the current `sudo ./update.sh` or `sudo ./install.sh`; missing dependencies are provisioned automatically from 1.4.2. `--no-install-deps` deliberately opts out. Normal backups need no dialog.
+- Missing dialog: rerun the current `sudo ./update.sh` or `sudo ./install.sh`; missing dependencies are provisioned automatically. `--no-install-deps` deliberately opts out. Normal backups need no dialog.
 - Small terminal: resize to at least 60x18 and reopen. Unapplied edits are not persisted.
 - Unsupported Bash syntax: preserve a private backup, replace expressions with literals manually; the manager will not execute them.
 - Unsafe permissions/symlink: correct owner/modes and choose nonsymlinked paths; the manager does not silently chmod existing secret files or follow links.

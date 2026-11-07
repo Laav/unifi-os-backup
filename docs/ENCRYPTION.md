@@ -1,6 +1,6 @@
 # Encryption at rest
 
-Version 1.3 can recheck encrypted bytes, optionally verify actual age decryption against the original plaintext metadata, and prepare decrypted recovery files. See [VERIFICATION.md](VERIFICATION.md) and [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md). A hash-only check never claims decryption or a successful UniFi restore. Scheduled decryption is opt-in and requires an operator-supplied protected identity; the normal backup job still needs public recipients only.
+[Documentation index](README.md) · [Verification](VERIFICATION.md) · [Recovery](DISASTER-RECOVERY.md)
 
 Completed backups can optionally be encrypted with [`age`](https://github.com/FiloSottile/age). Encryption is disabled by default and does not change existing installations until explicitly enabled.
 
@@ -8,12 +8,9 @@ The design uses public recipients on the backup host. The private recovery ident
 
 ## Enable age encryption
 
-Install `age` from the Ubuntu package or another independently verified source:
+The backup-host installer/updater provisions age automatically. If it is unavailable, rerun the current updater with dependency provisioning enabled. A separately managed recovery host also needs a trusted age installation before key generation or decryption; provision that host through its normal software-management process.
 
-```bash
-sudo apt-get update
-sudo apt-get install -y age
-```
+The wizard's encryption section manages public recipients and the feature flag. The following manual procedure documents the separate recovery-key boundary.
 
 Generate an identity on a separate recovery host:
 
@@ -39,6 +36,8 @@ AGE_RECIPIENTS_FILE="/etc/unifi-backup/age-recipients.txt"
 The official age CLI supports one or more public recipients through `--recipients-file`; see the [age documentation](https://github.com/FiloSottile/age/blob/main/doc/age.1.html). Do not copy an `AGE-SECRET-KEY` identity to the backup server.
 
 ## Result and restore test
+
+Use [local verification](VERIFICATION.md) to recheck encrypted bytes or explicitly test decryption against the recorded plaintext hash/size. Scheduled decryption is opt-in and requires an operator-supplied protected identity; normal backup creation needs public recipients only.
 
 A completed artifact becomes:
 

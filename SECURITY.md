@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest tagged release. Operators should test and deploy updates promptly, especially after UniFi OS or Microsoft Graph behavior changes.
+Security fixes target the latest [published stable release](https://github.com/Laav/unifi-os-backup/releases/latest). Review and test updates promptly, especially after UniFi OS or integration behavior changes. Documentation-only changes on `main` do not establish a new supported software version.
 
 ## Reporting a vulnerability
 
@@ -13,3 +13,5 @@ Rotate affected UniFi credentials, Graph client secrets, webhook/ntfy/storage to
 ## Scope
 
 Reports about secret disclosure, path traversal, unsafe retention, TLS bypass, command injection, permission failures, token leakage, and systemd sandbox escapes are in scope. Availability of undocumented UniFi endpoints is a compatibility issue unless it causes unsafe behavior.
+
+See the [security design](docs/SECURITY.md) for controls/residual risks and [testing boundaries](docs/TESTING.md) for the distinction between automated checks and real restoration/integration acceptance.

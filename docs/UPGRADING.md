@@ -1,8 +1,16 @@
-# Upgrading
+# Updating and rollback
 
-## Upgrade 1.3.0 or 1.4.1 to 1.4.2
+[Documentation index](README.md) · [Installation](INSTALL.md) · [Release history](../CHANGELOG.md)
 
-1.4.2 is a compatible patch to the 1.4 configuration manager. Pin the release instead of relying on an unreviewed moving branch:
+## Choose the source you intend to install
+
+The updater installs the source in the current checkout. It does not fetch, select or publish a release. Use a reviewed [published tag](https://github.com/Laav/unifi-os-backup/releases) for reproducibility, or deliberately follow `main` for branch updates.
+
+Before updating, review release notes and local changes. Keep an independently protected configuration backup, including referenced external files and administrator drop-ins. Never force a checkout/reset over local changes. Plan updates between backup/configuration jobs; jobs using older binaries must finish before using newer configuration transactions.
+
+## Update to a reviewed release
+
+This example selects `v1.4.2`. Replace the tag with the reviewed release you intend to deploy.
 
 ```bash
 cd /opt/unifi-os-backup
@@ -12,125 +20,77 @@ sudo git switch --detach v1.4.2
 sudo ./update.sh
 unifi-backup --version
 unifi-backup-configure --version
-sudo unifi-backup-configure --inspect --json
 sudo unifi-backup-configure --validate --json
+sudo unifi-backup-configure --inspect --json
 ```
 
-Review local changes before switching; do not force a checkout over them. Both version commands should report 1.4.2. The updater installs the checked-out source; it does not independently fetch/select a release. For a fresh test machine with no timers enabled, follow [INSTALL.md](INSTALL.md#recommended-first-run-on-a-test-machine).
+Both version commands should match the selected source. A detached release checkout is expected; it cannot use `git pull` as a tracked branch. Documentation-only commits on `main` do not change the installed software version or alter existing release archives.
 
-The updater preserves all existing env/recipient files, independent targets, backups, catalog and monitoring data. It installs the optional manager and pre-creates `.configure.lock` for read-only access by hardened services. Allow any jobs started by older binaries to finish before the first configuration transaction. No wizard, parser conversion, storage migration, timer activation or destructive operation is run automatically.
-
-The updater now provisions missing dependencies through configured APT repositories, including `dialog` and `age`, before deploying application files. No manual `apt install` is needed. For pre-provisioned/offline hosts use `sudo ./update.sh --no-install-deps`; missing optional features then warn, missing core dependencies fail. Provisioning errors return 69 and stop application deployment. See [INSTALL.md](INSTALL.md) for package side effects and requirements. The updater does not launch the wizard; run `sudo unifi-backup-configure` separately.
-
-1.4.2 accepts literal dollar signs that were incorrectly rejected in double quotes (for example a trailing dollar). Actual shell expansions remain unsupported and are never executed. Syntax errors now identify only the file basename, line and setting, with values hidden. If validation still rejects an existing file, inspect that location privately with `sudoedit`; use literal assignments, with single quotes for literal dollar-containing secrets. Do not blindly change real `$VARIABLE` references: first understand the intended effective value. Working legacy backups need no wizard conversion. Start with `--inspect --json` and `--validate`; live login/provider/notification tests remain explicit. No configuration file is rewritten by validation/update.
-
-No physical file-layout migration is required. Legacy credentials are not copied/activated automatically, and disabled target files are retained. New drop-ins affect only reviewed schedule/config-path/write-access choices and retain service hardening. See [CONFIGURE.md](CONFIGURE.md) for configuration rollback and the private transaction journal.
-
-Before reverting application code to the published v1.3.0, finish/recover any pending transaction, stop conflicting operations and preserve configuration/journals. Old binaries do not honor the new pending marker/configuration lock. Review/remove only manager-owned overrides if reverting related path/schedule choices; do not remove administrator overrides or pending retry sources. The existing v1.3.0 updater can reinstall that version after this review. Do not run configuration transactions concurrently with old readers.
-
-## Upgrade 1.2.0 source to the published 1.3.0 release
-
-Origin had no published release/tag before 1.3.0; the preceding source version was 1.2.0 at `0d96e1f`. The updater continues to install the currently checked-out source. It does not fetch or choose a release itself.
+## Update an existing main-branch checkout
 
 ```bash
 cd /opt/unifi-os-backup
 git status --short
-sudo git fetch origin --tags
-sudo git switch --detach v1.3.0
+git branch --show-current
+sudo git pull --ff-only
 sudo ./update.sh
-unifi-backup --version
+sudo unifi-backup-configure --validate
+```
+
+Use this sequence when the current branch is `main`. To move deliberately from a detached release to the branch, first review local changes, fetch origin and select/create the local branch tracking `origin/main`. Do not use a forced reset to resolve a non-fast-forward update.
+
+## What the updater preserves and changes
+
+The updater replaces installed programs, shared modules and packaged units. It preserves existing main/integration configuration, recipients, independent target files, backup artifacts and operational state. Missing optional configuration examples may be created with fictitious placeholders and mode 0600; existing files are never replaced.
+
+Missing application dependencies, including dialog and age, are provisioned through configured APT repositories before application deployment. No manual `apt install` step is required. `sudo ./update.sh --no-install-deps` opts out for managed/offline hosts. Missing core tools or provisioning failures return 69; APT package changes are not rolled back. See [dependency provisioning](INSTALL.md#prerequisites-and-dependency-provisioning).
+
+The updater does not run the wizard, convert configuration expressions or migrate legacy storage. It reloads systemd, enables the monitor timer and tries to restart already active backup/monitor timers; previously inactive timers are not started. Review persistent timers when scheduling a maintenance window. Verification, remote-verification and retry timers remain independently opt-in.
+
+New defaulted fields do not require copying an entire example over production configuration. Use `sudo unifi-backup-configure` to review supported settings, or compare the [generated field reference](CONFIGURATION-REFERENCE.md) and examples privately before manual edits.
+
+## Validate behavior after updating
+
+Offline validation reports syntax, security, dependency and configuration issues without running network tests or rewriting files. Warnings alone do not make validation fail. Unsupported shell expressions remain refused by the configuration manager even if an older Bash reader accepted them; see [literal assignments](CONFIGURATION.md#manual-configuration-and-trust).
+
+When ready, explicitly test login and create one backup:
+
+```bash
 sudo unifi-backup-check --live
 sudo systemctl start unifi-backup.service
+sudo journalctl -u unifi-backup.service --since "10 minutes ago" --no-pager
 sudo unifi-backup-verify --latest --json
 ```
 
-Review local modifications before switching. Existing credentials, age recipients/identities, backups and status data are preserved. No new cloud operation or lock is enabled by default. New optional settings are in the main example, and `targets.d/target.env.example` is installed without activating it.
+Check each enabled remote destination and notification independently. Graph HTTP 202 confirms acceptance, not delivery. Repeat login and actual backup creation after every UniFi OS upgrade because the controlplane endpoints can change. Perform recovery drills on isolated infrastructure.
 
-Enable only the required scheduled operations after configuration/testing:
+## Existing configuration and migration
 
-```bash
-sudo systemctl enable --now unifi-backup-verify.timer
-sudo systemctl enable --now unifi-backup-remote-verify.timer
-sudo systemctl enable --now unifi-backup-retry.timer
-```
+No physical configuration-layout migration is required for the terminal manager. It reads existing supported literals, preserves unknown literals/comments and uses current values. It does not reset secrets or activate optional integrations.
 
-Their corresponding `VERIFY_ENABLED`, `REMOTE_VERIFY_ENABLED`, and `RETRY_ENABLED` flags also need `true`. Timer intervals are independent systemd drop-ins; retry backoff is independent of timer frequency. A missing new flag means disabled. New remote reads/listing/immutability require reviewed permissions; legacy write-only credentials remain sufficient for the original uploader.
+- Nonempty `BACKUP_TARGETS` takes precedence over legacy single-target storage. Legacy credentials are not automatically copied, merged or activated. Follow [storage transitions](CONFIGURE.md#storage-mode-transitions) when migrating deliberately.
+- Custom file references and administrator overrides remain in place. The wizard creates narrowly scoped owned drop-ins only after review. Changing `BACKUP_DIR` manually also requires reviewing service write access.
+- Manager transactions use a shared configuration lock, operation locks and a persistent recovery marker. Older binaries/manual editors do not participate automatically. Do not mix them with active transactions.
+- Verification/retry flags and their timers are independent. Review required permissions before enabling reads, listing, full remote verification or immutability requests; legacy upload-only credentials remain usable for their original upload workflow.
 
-For a later release rollback, select the previously verified published tag and rerun its updater. Because no preceding published release exists for this first release, the documented source rollback is `git switch --detach 0d96e1f`, then `sudo ./update.sh`. First disable the new timers, preserve monitoring/queue files and inspect pending/dead tasks; the old version does not understand retry pins or GFS. Do not run old retention against backups still required by the new retry queue. Encrypted artifacts and original metadata remain compatible, but new operational annotations may be ignored by old tooling.
+For an older installation, review the intervening [changelog](../CHANGELOG.md), [archived release notes](releases/) and [configuration reference](CONFIGURATION-REFERENCE.md). Historical versions remain identified there; unreleased source versions are not invented as published releases. In particular, v1.4.0 is an unpublished source tag, superseded by the published v1.4.1 release.
 
-The existing `main` workflow remains available: switch to `main`, review status, use `git pull --ff-only`, then run `update.sh`. Use the release tag for a reproducible stable installation. See [RELEASING.md](RELEASING.md).
+## Rollback
 
-Read `CHANGELOG.md`, verify the commit/tag, and inspect changes to `bin/`, `systemd/`, and configuration examples.
+Application rollback and configuration rollback are separate operations. Preserve configuration, state and backups before either. Complete/recover pending configuration transactions first; never delete a pending marker to make an older reader run.
 
-```bash
-cd /opt/unifi-os-backup
-git status --short
-sudo git pull --ff-only
-sudo ./update.sh
-sudo unifi-backup-check --live
-sudo systemctl start unifi-backup.service
-sudo journalctl -u unifi-backup.service -n 100 --no-pager
-```
+For application rollback, select the exact previously verified tag, run that checkout's updater and retest. Review its compatibility with current metadata, encrypted artifacts, retry pins, retention policy and drop-ins. Disable incompatible scheduled workers deliberately; older retention must not remove sources needed by a newer retry queue. Historical source-only versions require a reviewed commit, not an invented release tag.
 
-The updater replaces installed executables, the shared library, and units. It does not replace or remove existing files in `/etc/unifi-backup` and never changes `/var/backups/unifi`. It creates newly introduced optional configuration examples only when absent, using fictitious placeholders and mode 0600. New main settings appear in `config/unifi-backup.env.example`; merge the settings you intend to use manually.
-
-## Upgrading from 1.1.0 to 1.2.0
-
-The safe defaults keep encryption and webhooks disabled. After `update.sh`, review and optionally add:
+For a completed configuration transaction, use its privately recorded transaction ID:
 
 ```bash
-ENCRYPTION_TYPE="none"
-AGE_RECIPIENTS_FILE="/etc/unifi-backup/age-recipients.txt"
-CATALOG_FILE="/var/lib/unifi-backup/catalog.json"
-STALE_WARNING_HOURS="192"
-STALE_CRITICAL_HOURS="216"
-NOTIFY_ON_STALE="true"
-ENABLE_WEBHOOK="false"
-WEBHOOK_CONFIG_FILE="/etc/unifi-backup/webhook.env"
+sudo unifi-backup-configure --rollback TRANSACTION_ID --yes
 ```
 
-The updater creates missing `webhook.env` and `age-recipients.txt` examples but never replaces existing files. It installs and enables the monitor timer without starting a previously inactive timer. After choosing thresholds:
+For an interrupted transaction:
 
 ```bash
-sudo unifi-backup-check --live
-sudo systemctl start unifi-backup.service
-sudo systemctl enable --now unifi-backup-monitor.timer
-sudo unifi-backup-catalog --print
+sudo unifi-backup-configure --recover --yes
 ```
 
-Install `age` and complete the separate recovery-key procedure in [ENCRYPTION.md](ENCRYPTION.md) before changing `ENCRYPTION_TYPE` to `age`. Test decryption and a non-production restore before depending on encrypted backups.
-
-## Upgrading from 1.0.x to 1.1.0
-
-Existing installations remain local-only by default because missing new variables receive safe defaults. After `update.sh`, review and optionally add:
-
-```bash
-RETENTION_COUNT="0"
-RETENTION_MIN_COUNT="1"
-BACKUP_DOWNLOAD_RETRIES="1"
-BACKUP_RETRY_DELAY="15"
-LOG_FORMAT="text"
-STATUS_FILE="/var/lib/unifi-backup/status.json"
-REMOTE_STORAGE_TYPE="none"
-STORAGE_CONFIG_FILE="/etc/unifi-backup/storage.env"
-REMOTE_UPLOAD_REQUIRED="true"
-ENABLE_NTFY="false"
-NTFY_CONFIG_FILE="/etc/unifi-backup/ntfy.env"
-NOTIFY_ON_SUCCESS="false"
-NOTIFY_ON_FAILURE="true"
-NOTIFY_ON_RECOVERY="true"
-```
-
-Do not paste cloud or ntfy secrets into the main file; keep them in their separate mode-0600 files. A first real run creates the status/metrics files and a metadata sidecar. Confirm:
-
-```bash
-sudo unifi-backup-status
-sudo ls -l /var/lib/unifi-backup
-sudo ls -l /var/backups/unifi/*.unifi.json
-```
-
-If local repository changes exist, stop and review them instead of forcing a pull. Keep local configuration outside the checkout, use systemd drop-ins for local unit changes, and avoid editing installed scripts directly.
-
-After any UniFi OS upgrade, repeat both the live login check and a real backup because the controlplane endpoints are not a stable public API. After Microsoft configuration changes, send a small test backup and verify message trace.
-
-Rollback by checking out a previously verified tag, running `update.sh`, and retesting. Configuration migrations, when introduced, will be documented in the changelog.
+Use the same custom `--config` path when applicable. Recovery validates preimages/current hashes and refuses to overwrite later operator edits. See [transaction recovery](CONFIGURE.md#transactions-backup-and-recovery-of-configuration) for locking, journal protection and rollback limits.

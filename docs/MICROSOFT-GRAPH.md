@@ -1,5 +1,7 @@
 # Optional Microsoft Graph email
 
+[Documentation index](README.md) · [Notifications](NOTIFICATIONS.md) · [Troubleshooting](TROUBLESHOOTING.md#graph-failures)
+
 The local backup path is independent of Microsoft 365. Leave `ENABLE_EMAIL="false"` unless email is explicitly required.
 
 ## App registration
@@ -24,7 +26,7 @@ Do not combine unscoped Entra `Mail.Send` consent with a scoped Exchange RBAC `A
 
 ## Configuration
 
-Edit `/etc/unifi-backup/graph.env`:
+Use the wizard's notification section, or privately edit `/etc/unifi-backup/graph.env`. Application authorization is configured separately in Microsoft 365; the wizard does not grant consent or change mailbox permissions.
 
 ```bash
 TENANT_ID="00000000-0000-0000-0000-000000000000"
@@ -38,7 +40,7 @@ GRAPH_SIMPLE_ATTACHMENT_MAX_BYTES="2800000"
 
 Then set `ENABLE_EMAIL="true"` in `unifi-backup.env`. Keep both files root:root 0600.
 
-The OAuth request uses the v2 token endpoint, client credentials grant, and `https://graph.microsoft.com/.default`. The secret is URL-encoded by Python and streamed to curl via stdin. The access token is held briefly in a root-only temporary header file, never in a process argument or log, and removed by a trap. `GRAPH_AUTH_METHOD` makes the authentication strategy explicit; only `client_secret` is accepted in 1.3.0. A later certificate implementation can add a separate assertion generator without changing backup or mail-payload logic.
+The OAuth request uses the v2 token endpoint, client credentials grant, and `https://graph.microsoft.com/.default`. The secret is URL-encoded by Python and streamed to curl via stdin. The access token is held briefly in a root-only temporary header file, never in a process argument or log, and removed by a trap. `GRAPH_AUTH_METHOD` makes the authentication strategy explicit; only `client_secret` is implemented. Certificate authentication is not available.
 
 ## Attachment limit
 

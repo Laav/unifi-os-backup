@@ -1,5 +1,7 @@
 # Security design
 
+[Documentation index](README.md) · [Vulnerability reporting](../SECURITY.md) · [Testing boundaries](TESTING.md)
+
 ## Trust boundaries
 
 The root service reads local secrets, talks to a configured UniFi HTTPS origin and optionally Microsoft identity/Graph, Azure Blob or S3-compatible storage, ntfy, and a generic webhook, then writes sensitive backups. Root, the configuration owner, the configured services, and the host CA trust store are trusted boundaries.
@@ -8,10 +10,10 @@ The root service reads local secrets, talks to a configured UniFi HTTPS origin a
 
 - Configuration management parses literals without eval/sourcing. Existing comments and unknown literals are preserved; executable syntax is refused. Dialog parameters travel through an anonymous file descriptor, sensitive inputs are never prefilled, and diagnostic/review values are redacted.
 - Apply uses a private durable journal, configuration/operation locks, dependency fingerprints, per-file atomic replacement and pending-reader protection. Cross-file atomicity is not claimed. Recovery checks preimages and refuses later operator edits. Journals contain old secrets and require credential-grade protection/retention.
-- New systemd drop-ins retain hardening and grant only reviewed private paths. The pre-created configuration lock is opened read-only by hardened services. Provider inspections/tests are explicitly read-only and opt-in; the wizard never generates private identities or changes cloud permissions.
+- Manager-owned systemd drop-ins retain hardening and grant only reviewed private paths. The pre-created configuration lock is opened read-only by hardened services. Provider inspections/tests are explicitly read-only and opt-in; the wizard never generates private identities or changes cloud permissions.
 - Configuration/key file roles must remain distinct and cannot overlap locks, status/catalog files or the transaction journal, including previous key paths moved within a draft. Planning fails before writes for such conflicts, even when an affected integration is disabled.
 
-- New maintenance operations load protected Bash assignments, transport credentials over stdin to shared data modules, and serialize with the backup/retention lock.
+- Maintenance operations load protected Bash assignments, transport credentials over stdin to shared data modules, and serialize with the backup/retention lock.
 - Provider requests disable curl's automatic rc file, require HTTPS, reject redirects and unsafe object names, and place signed URLs/headers in private temporary files.
 - Full remote checks hash downloaded bytes. Conditional-write conflicts are accepted only after content identity checks; metadata snapshots must identify the same original backup.
 - Retry pins protect active replication sources. Queue corruption fails retention safely; explicit terminal dead letters release pins with visible state.
@@ -30,10 +32,11 @@ The root service reads local secrets, talks to a configured UniFi HTTPS origin a
 - The destination temporary file shares the final filesystem so `mv` is atomic.
 - Fixed filename matching, absolute-path checks, non-negative bounded retention, a minimum-count floor, and a non-root-directory guard constrain deletion.
 - `flock` serializes runs.
-- systemd denies capabilities and writes outside the configured default backup path while allowing outbound network and CA reads.
+- systemd denies capabilities and restricts writes to the default backup/runtime/state paths, plus explicitly reviewed narrow overrides, while allowing outbound network and CA reads.
 
 ## Residual risks
 
+- Installer/updater run configured APT repositories' package-management code as root when provisioning dependencies. Retain trusted repository/signature policy; package changes are not part of configuration rollback. `--no-install-deps` permits centrally provisioned hosts.
 - Root can read every secret and backup; harden and patch the host.
 - Another root process can inspect process memory, stdin, or temporary files.
 - SHA256 detects accidental change but provides no authenticity unless hashes are stored through an independently protected channel.

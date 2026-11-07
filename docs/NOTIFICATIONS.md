@@ -2,12 +2,13 @@
 
 ntfy and generic HTTPS webhooks are optional status-notification channels. Neither carries the `.unifi` attachment. Microsoft Graph mail remains a separate optional channel.
 
-Install a protected configuration example:
+[Documentation index](README.md) · [Webhooks](WEBHOOKS.md) · [Graph email](MICROSOFT-GRAPH.md)
+
+## Configure ntfy
+
+Use the wizard's notification section, or edit the protected placeholder file created by installation. Preserve existing credentials; do not copy an example over an already configured file.
 
 ```bash
-sudo install -o root -g root -m 0600 \
-  /opt/unifi-os-backup/config/ntfy.env.example \
-  /etc/unifi-backup/ntfy.env
 sudoedit /etc/unifi-backup/ntfy.env
 ```
 

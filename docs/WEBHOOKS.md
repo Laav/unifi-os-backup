@@ -1,10 +1,14 @@
 # Generic HTTPS webhooks
 
+[Documentation index](README.md) · [Notifications](NOTIFICATIONS.md) · [Monitoring](MONITORING.md)
+
 The optional webhook channel sends a compact JSON event to an administrator-controlled HTTPS endpoint. It is intended for monitoring gateways, RMM/PSA integrations, automation platforms, or a small adapter that translates the generic schema to a vendor-specific Teams, Slack, PRTG, Zabbix, or Checkmk format.
 
 It does not pretend that every vendor accepts the same payload. Use a reviewed adapter, Azure Logic App, Power Automate flow, or equivalent when the destination requires a proprietary schema.
 
 ## Configure
+
+Use the wizard's notification section to manage the integration centrally, or edit the existing protected files below. Installation creates missing placeholder files without replacing existing configuration. A live notification test is a separate explicit action.
 
 ```bash
 sudoedit /etc/unifi-backup/webhook.env

@@ -1,29 +1,56 @@
-# Validation and infrastructure boundaries
+# Testing and validation boundaries
+
+[Documentation index](README.md) · [Contributing](../CONTRIBUTING.md) · [Recorded evidence](CONFIGURATION-VALIDATION.md)
+
+## Run the software checks
+
+Use an isolated Ubuntu environment matching [the CI workflow](../.github/workflows/ci.yml). The complete matrix covers Ubuntu 22.04, 24.04 and 26.04. Some filesystem/lifecycle tests require root; real dialog tests require Linux pseudo-terminal support. Do not use a production backup host as a disposable CI environment.
 
 ```bash
 bash tests/run.sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 shellcheck install.sh update.sh uninstall.sh bin/* lib/*.sh tests/*.sh tests/fixtures/mock-*
-python3 -m compileall -q lib/ub
+python3 -m compileall -q lib/ub tests
 git diff --check
 ```
 
-Configuration-specific coverage additionally includes literal parser/serializer round trips (quotes, dollars, Unicode, multiline and ANSI literals), comment/unknown preservation, inactive integrations, legacy transitions, independent targets/quorum, redacted diagnostics, permissions/symlinks, UI Back/Cancel, missing TTY/dialog, interruption rollback, corrupt preimages, pending recovery, concurrent writers and stale dependency edits. `test-config-lock.sh` exercises shared read-only descriptor locks and pending-reader refusal on Linux.
+CI additionally installs the actual CLI/modules in its container, validates units with `systemd-analyze verify`, runs installed help/version commands and compares the installed generated reference. To inspect the generated reference without a TTY or configuration:
 
-Reserved-path regression tests reject configuration/key aliases involving manager locks/markers/journals, engine locks, status/catalog files, recipient/identity roles and moved key resources. A disabled integration cannot use a reserved path to bypass planning safety.
+```bash
+python3 lib/ub/configure.py --reference | cmp - docs/CONFIGURATION-REFERENCE.md
+```
 
-`test_configure_tui.py` opens real Linux pseudo-terminals with dialog, checking non-echoed synthetic password entry, option-like input and Escape. `test_configure_install.py` runs fixture copies of actual install/update/uninstall scripts with fixed installation prefixes rewritten into a private temporary tree and a no-op systemctl. It checks preserved config/backups, automatic missing-dialog provisioning during update, and ordinary-removal versus explicit-purge behavior; it never operates on live units or the host's production directories. APT is intercepted, including unexpected calls. `test_dependencies.py` mocks every APT call and covers idempotent provisioning, safe options, opt-out, missing core dependencies, failures and non-TTY behavior. Parser differential tests compare only synthetic literals against real Bash, with secret-redaction assertions on errors. These tests explicitly skip unsupported Windows environments. CI provisions dialog before the Ubuntu matrix runs its PTY tests.
+Require relevant native tests to execute before a software release. Windows or non-root skips are explicit infrastructure limits; they are not passes. Historical counts and exact successful commits are kept in [CONFIGURATION-VALIDATION.md](CONFIGURATION-VALIDATION.md), rather than maintained as a changing test-count promise here.
 
-The disposable Ubuntu CI containers initially install analysis/platform tools without dialog/age. A separate integration step copies only `install.sh` into a temporary directory and runs `--dependencies-only`, using real APT to provision the missing application packages. Both executables must then be available before the complete test suite runs. This tests standalone provisioning on every supported Ubuntu version; it does not deploy application configuration, enable units or operate on a production host.
+## Configuration and lifecycle coverage
 
-The generated inventory can be checked with `python3 lib/ub/configure.py --reference`; its output must match `docs/CONFIGURATION-REFERENCE.md`. CI also installs the actual CLI/modules, runs installed help/version commands and compares the installed reference output. For production rollout follow the operator checklist in [CONFIGURE.md](CONFIGURE.md) and the release-specific evidence in [CONFIGURATION-VALIDATION.md](CONFIGURATION-VALIDATION.md); an earlier green CI run does not validate newer changes.
+- Parser/serializer round trips cover quotes, literal dollars, Unicode, multiline/ANSI literals, actual expansion refusal, comment/unknown preservation and redacted diagnostics. A differential test sources only synthetic fixtures in real Bash; the configuration manager never sources files.
+- Model tests cover missing/disabled integrations, legacy transitions, independent destinations/quorum, path roles, permissions, symlinks, aliases involving locks/state/keys, schedules and generated systemd drop-ins.
+- Transaction tests cover Back/Cancel, missing TTY/UI dependency, concurrent writers, changed dependencies, interruption rollback, corrupt preimages, pending recovery and refusal to overwrite later edits.
+- `test-config-lock.sh` checks actual Linux shared read-only locks, contention and pending-reader refusal.
+- `test_configure_tui.py` uses real dialog pseudo-terminals for masked synthetic entry, option-like values and Escape.
+- `test_configure_install.py` rewrites only fixed prefixes in fixture copies of the actual lifecycle scripts. It operates in a temporary tree with mocked systemctl/APT, checks preserved config/backups, missing-dialog provisioning, deployment refusal on APT failure, ordinary removal and explicit purge. It does not touch production paths or live units.
 
-The Ubuntu 22.04/24.04/26.04 CI matrix runs the existing Bash suite, new Bash end-to-end operations, standard-library Python tests, real `age` encryption/decryption, ShellCheck, and systemd unit validation. A public-source guard rejects tracked backup/email/credential artifacts and obvious live token/private-key patterns. It supplements manual privacy review.
+## Dependency provisioning coverage
 
-Synthetic tests cover metadata/hash/size failures; missing metadata; error-page rejection; wrong age identities; independent/partial destinations; conditional upload idempotence; queue persistence/exhaustion/expiry and pins; quorum after partial retry; remote byte mismatches; S3/Azure listing and protected transport; timeout/authentication errors; required immutability without capability; local/cloud/filesystem recovery; dry-run; insufficient disk space; interrupted recovery cleanup; robust anomaly baselines, outliers, size/timing changes and identical hashes; redacted deterministic diffs and unsupported native formats.
+`test_dependencies.py` intercepts every APT call. It covers missing dialog/Git/age, safe options, idempotence, opt-out versus missing core tools, failures and no-TTY/help behavior. Regular unit/lifecycle tests never install host packages.
 
-Queue-capacity regression tests also verify that repeated rejected tasks cannot grow dead-letter history beyond its configured bound, active retention pins remain intact, and monitoring reflects the bounded queue.
+Separately, disposable CI containers initially install analysis/platform tools without dialog/age. CI copies only `install.sh` into a temporary directory and runs `--dependencies-only` with real APT. Both tools must become available before the complete suite executes. This tests the actual standalone provisioner on each Ubuntu release without deploying application configuration or activating units.
 
-Kernel flock contention and symlinks run on Linux. The Windows development host cannot create test symlinks under its current permissions and has no native Linux flock; those checks are explicitly deferred to CI, not claimed locally. Real age tests generate ephemeral identities and delete them after execution. No production backup, cloud credential, lock/hold mutation, message or controller restore occurs during tests.
+## Backup, storage and recovery coverage
 
-Live UniFi restore compatibility, provider IAM/SAS permissions, S3-compatible vendor quirks, real network failure modes, provider WORM/account/versioning/lifecycle setup, and actual Auvik/RMM/Graph delivery require operator acceptance testing in their own environment. Mock protocol success is not a live cloud validation. The opaque native `.unifi` format does not acquire semantic parser support through these tests.
+Synthetic fixtures and mock transports cover metadata/hash/size failures, error-page exclusion, wrong age identities, independent/partial destinations, conditional-write idempotence, persistent retries, quorum after retry, bounded dead-letter history, retention pins, remote byte mismatches and provider listing/transport failures.
+
+Further cases cover required immutability without capability, local/cloud/filesystem recovery, dry-run, insufficient disk space, interrupted staging cleanup, anomaly baselines/outliers/timing/identical hashes, redacted deterministic diffs and unsupported native formats. Real age tests create temporary identities and remove them afterward.
+
+A public-source guard rejects tracked operational artifacts and obvious live token/private-key patterns. It supplements a manual privacy review. Tests use synthetic data; no production controller restore, Graph delivery, cloud credential or real lock/hold mutation is part of the ordinary suite.
+
+## Documentation-only checks
+
+Check relative paths/anchors, fenced example syntax, command/options against installed help or source, generated-reference consistency, privacy and `git diff --check`. Never run backup, purge, rollback, upload, notification or package-management examples just to proofread them. Existing CI still runs on documentation commits; no version bump or new release is needed for editorial changes.
+
+## Operator acceptance
+
+Live UniFi compatibility/restoration, provider IAM/SAS/WORM/lifecycle configuration, vendor-specific S3 behavior, real network failures, native ARM64 execution and actual Auvik/RMM/Graph/notification delivery require environment-specific acceptance. A mock protocol success does not validate cloud permissions; a real age round trip does not validate a controller restore.
+
+On an isolated machine, walk through fresh/existing configuration, masked edits, Back/Cancel, explicit Finish, custom paths/calendars, locking and recovery before rollout. Then explicitly test the intended controller, destinations and notifications, create/verify one backup and complete an isolated restore drill. Use [CONFIGURE.md](CONFIGURE.md) and [DISASTER-RECOVERY.md](DISASTER-RECOVERY.md) as the operator walkthroughs.
