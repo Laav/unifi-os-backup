@@ -51,6 +51,8 @@ for command_name in curl python3 sha256sum stat mktemp; do
 done
 check_secret_file "$CONFIG_FILE"
 # shellcheck disable=SC1090
+ub_configuration_read_lock "$CONFIG_FILE"
+# shellcheck disable=SC1090
 source "$CONFIG_FILE"
 : "${LOG_FORMAT:=text}" "${REMOTE_STORAGE_TYPE:=none}"
 : "${STORAGE_CONFIG_FILE:=/etc/unifi-backup/storage.env}" "${BACKUP_DIR:=/var/backups/unifi}"

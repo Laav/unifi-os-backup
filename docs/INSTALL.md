@@ -8,6 +8,7 @@
 - Network reachability to the HTTPS UniFi OS controlplane.
 - `age` only when optional encryption at rest is enabled.
 - Python's standard library is sufficient for the new data/storage helpers; no pip packages or cloud SDKs are needed.
+- The 1.4 development wizard optionally requires `dialog` and an interactive terminal. Backups, offline configuration validation and unattended installation do not.
 
 On Ubuntu:
 
@@ -24,6 +25,8 @@ cd /opt/unifi-os-backup
 git status
 git log -1 --show-signature
 sudo ./install.sh
+# Optional in the reviewed 1.4 development tree, after installing dialog:
+# sudo ./install.sh --configure
 ```
 
 Pinning a release tag or verified commit is preferable to installing an unreviewed moving branch.
@@ -70,6 +73,16 @@ For a stable reproducible installation, select the published `v1.3.0` tag before
 
 ## Activate
 
+The 1.4 development source provides one terminal configuration interface:
+
+```bash
+sudo apt-get install dialog
+sudo unifi-backup-configure --guided
+sudo unifi-backup-configure --validate
+```
+
+See [CONFIGURE.md](CONFIGURE.md) for every section, existing installations, migration/rollback, schedules and safe live-test choices. `install.sh --configure` explicitly launches it; ordinary install and update never require it. The currently published v1.3.0 does not contain this new command; use the manual workflow below when installing that release. Referenced configuration and manager journals remain outside Git.
+
 ```bash
 sudoedit /etc/unifi-backup/unifi-backup.env
 sudo chown -R root:root /etc/unifi-backup
@@ -87,3 +100,5 @@ Check `systemctl status` and `journalctl -u unifi-backup.service` after the firs
 ## Uninstall
 
 `sudo ./uninstall.sh` removes programs and units but preserves secrets, monitoring state, and backups. `sudo ./uninstall.sh --purge` also permanently deletes `/etc/unifi-backup`, `/var/lib/unifi-backup`, and `/var/backups/unifi`; inspect and copy important backups first.
+
+Ordinary removal also retains manager-owned drop-ins and private configuration rollback journals. Purge removes only exact manager-owned drop-ins with their expected header, preserving other administrator overrides. External custom configuration/backup paths are not purged automatically.

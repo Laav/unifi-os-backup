@@ -6,14 +6,17 @@ PROGRAM="unifi-os-backup installer"
 INSTALL_DIR="/opt/unifi-os-backup"
 REPOSITORY_URL=""
 ENABLE_TIMER=true
+CONFIGURE=false
 
 usage() {
   cat <<'EOF'
-Usage: sudo ./install.sh [--repository-url HTTPS_GIT_URL] [--install-dir DIR] [--no-enable]
+Usage: sudo ./install.sh [--repository-url HTTPS_GIT_URL] [--install-dir DIR] [--no-enable] [--configure]
 
 From a complete checkout, files are installed from that checkout. When only this
 bootstrap script was downloaded, --repository-url is required and Git clones the
 repository into /opt/unifi-os-backup.
+--configure explicitly opens the optional dialog-based terminal wizard after
+installation. Without it installation never needs a TTY or dialog.
 EOF
 }
 
@@ -22,6 +25,7 @@ while (($#)); do
     --repository-url) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; REPOSITORY_URL=$2; shift 2 ;;
     --install-dir) [[ $# -ge 2 ]] || { usage >&2; exit 64; }; INSTALL_DIR=$2; shift 2 ;;
     --no-enable) ENABLE_TIMER=false; shift ;;
+    --configure) CONFIGURE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "$PROGRAM: unknown option: $1" >&2; exit 64 ;;
   esac
@@ -30,6 +34,13 @@ done
 log() { printf '%s: %s\n' "$PROGRAM" "$*"; }
 die() { printf '%s: ERROR: %s\n' "$PROGRAM" "$*" >&2; exit "${2:-1}"; }
 (( EUID == 0 )) || die "run this installer as root (sudo ./install.sh)" 77
+for protected in /etc/unifi-backup /etc/unifi-backup/targets.d /etc/unifi-backup/.configure.lock /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /etc/unifi-backup/webhook.env /etc/unifi-backup/age-recipients.txt; do
+  [[ ! -L $protected ]] || die "configuration symlink refused" 78
+done
+if [[ $CONFIGURE == true ]]; then
+  [[ -t 0 && -t 1 ]] || die "--configure needs a terminal; use sudo unifi-backup-configure later" 69
+  command -v dialog >/dev/null 2>&1 || die "--configure needs the optional dialog package (apt-get install dialog)" 69
+fi
 [[ $INSTALL_DIR == /* && $INSTALL_DIR != "/" ]] || die "--install-dir must be an absolute, non-root path" 64
 
 for command_name in bash curl python3 sha256sum find stat flock systemctl install; do
@@ -61,11 +72,11 @@ for script in "$source_dir/bin/unifi-backup" "$source_dir/bin/unifi-mail-backup"
 done
 
 log "Installing executables and systemd units"
-for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli; do
+for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli config_schema config_files config_model config_transaction config_ui configure; do
   [[ -f $source_dir/lib/ub/$module.py ]] || die "Missing data module: $module" 66
 done
 bash -n "$source_dir/lib/unifi-backup-runtime.sh"
-for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff; do
+for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff configure; do
   [[ -f $source_dir/bin/unifi-backup-$helper ]] || die "Missing helper: $helper" 66
   bash -n "$source_dir/bin/unifi-backup-$helper"
   install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-$helper" "/usr/local/sbin/unifi-backup-$helper"
@@ -96,6 +107,10 @@ install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup-monitor.servic
 install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup-monitor.timer" /etc/systemd/system/unifi-backup-monitor.timer
 
 install -d -o root -g root -m 0700 /etc/unifi-backup
+[[ ! -L /etc/unifi-backup/.configure.lock ]] || die "unsafe configuration lock symlink" 78
+if [[ ! -e /etc/unifi-backup/.configure.lock ]]; then
+  install -o root -g root -m 0600 /dev/null /etc/unifi-backup/.configure.lock
+fi
 install -d -o root -g root -m 0700 /var/backups/unifi
 install -d -o root -g root -m 0755 /var/lib/unifi-backup
 if [[ ! -e /etc/unifi-backup/unifi-backup.env ]]; then
@@ -151,9 +166,14 @@ fi
 cat <<'EOF'
 
 Installation complete.
-  1. Edit /etc/unifi-backup/unifi-backup.env
-  2. Run: sudo unifi-backup-check --live
+  1. Run: sudo unifi-backup-configure (optional dependency: apt-get install dialog)
+     Or retain the documented manual configuration workflow.
+  2. Validate without network: sudo unifi-backup-configure --validate
+     Optional explicit login test: sudo unifi-backup-check --live
   3. Run: sudo systemctl start unifi-backup.service
   4. Start scheduling: sudo systemctl start unifi-backup.timer
   5. Start freshness checks: sudo systemctl start unifi-backup-monitor.timer
 EOF
+if [[ $CONFIGURE == true ]]; then
+  /usr/local/sbin/unifi-backup-configure --guided
+fi

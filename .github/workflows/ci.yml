@@ -17,7 +17,7 @@ jobs:
         ubuntu: ["22.04", "24.04", "26.04"]
     steps:
       - name: Install static analysis
-        run: apt-get update && apt-get install -y git bash curl python3 coreutils findutils util-linux shellcheck systemd age
+        run: apt-get update && apt-get install -y git bash curl python3 coreutils findutils util-linux shellcheck systemd age dialog
       - uses: actions/checkout@v5
       - name: Trust the checked-out workspace in the container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -27,7 +27,7 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: ShellCheck
         run: shellcheck install.sh update.sh uninstall.sh bin/* lib/*.sh tests/*.sh tests/fixtures/mock-*
-      - name: Verify systemd units
+      - name: Verify systemd units and installed CLI
         run: |
           install -m 0755 bin/* /usr/local/sbin/
           install -d -m 0755 /usr/local/lib/unifi-backup /var/lib/unifi-backup
@@ -38,3 +38,7 @@ jobs:
           install -d -m 0700 /var/backups/unifi
           install -m 0644 systemd/* /etc/systemd/system/
           systemd-analyze verify /etc/systemd/system/unifi-backup*.service /etc/systemd/system/unifi-backup*.timer
+          unifi-backup --version
+          unifi-backup-configure --version
+          unifi-backup-configure --help >/dev/null
+          unifi-backup-configure --reference | cmp - docs/CONFIGURATION-REFERENCE.md

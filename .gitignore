@@ -9,6 +9,9 @@
 *.pfx
 credentials*
 secrets*
+.configure.lock
+.configure-pending
+.configure-transactions/
 age-recipients.txt
 age-identity*
 *-identity.txt

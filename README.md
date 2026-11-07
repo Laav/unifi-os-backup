@@ -4,6 +4,8 @@ Production-oriented Bash tooling that signs in to a local UniFi OS controlplane,
 
 Version 1.3 adds repeatable integrity verification, independent storage targets, persistent replication retries, provider immutability checks, GFS retention, recovery preparation, deterministic anomaly analysis, and a privacy-preserving configuration-export diff engine. Native opaque `.unifi` semantic parsing is explicitly unsupported; see [format capabilities](docs/CONFIG-DIFF.md).
 
+The **1.4.0-dev development tree** adds one secure full-screen terminal configuration manager for all integrations: `sudo unifi-backup-configure`. Configuration remains in compatible external files; existing backups and automation do not need the wizard. This development change is not a published release; the verified latest published release is v1.3.0.
+
 > [!IMPORTANT]
 > `POST /api/auth/login` and `GET /api/backup/download` are observed UniFi OS **controlplane endpoints**, not a documented stable public Ubiquiti API. UniFi upgrades can change or remove them. This project fails closed when authentication, status, type, size, or content differs from the expected behavior. Read [Endpoint compatibility](docs/TROUBLESHOOTING.md#endpoint-compatibility) before production use.
 
@@ -33,11 +35,12 @@ The official UniFi OS Server currently documents Ubuntu 24.04 or later for its o
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git curl python3 coreutils findutils util-linux
+sudo apt-get install -y git curl python3 coreutils findutils util-linux dialog
 sudo git clone https://github.com/Laav/unifi-os-backup.git /opt/unifi-os-backup
 cd /opt/unifi-os-backup
-sudo ./install.sh
-sudoedit /etc/unifi-backup/unifi-backup.env
+sudo ./install.sh --configure
+sudo unifi-backup-configure --validate
+# Explicit network test; does not create a backup:
 sudo unifi-backup-check --live
 sudo systemctl start unifi-backup.service
 sudo systemctl start unifi-backup.timer
@@ -45,6 +48,12 @@ sudo systemctl start unifi-backup-monitor.timer
 ```
 
 The installer enables the timer but deliberately does not start it until configuration has been reviewed and a live login check succeeds. The default schedule is Sunday at 03:00 local time, with `Persistent=true`.
+
+For unattended installation omit `--configure`; `dialog` is optional for normal backup operation. Existing installations can run `sudo ./update.sh` followed by `sudo unifi-backup-configure`. The updater never launches the wizard or migrates configuration automatically. For a non-mutating redacted view use `sudo unifi-backup-configure --inspect --json`.
+
+Read [the setup walkthrough](docs/CONFIGURE.md), [architecture audit](docs/CONFIGURATION-AUDIT.md), and [generated setting inventory](docs/CONFIGURATION-REFERENCE.md). Use arrows, Tab, Space and Enter; Back/Next navigate, Cancel discards unapplied edits, and Finish requires explicit confirmation. Live tests and timer activation remain separate opt-in actions.
+
+The current review/test results and required Linux acceptance checks are recorded in [CONFIGURATION-VALIDATION.md](docs/CONFIGURATION-VALIDATION.md). Development source is not a claim of completed production validation or a new published release.
 
 See [INSTALL.md](docs/INSTALL.md) for bootstrap installation, [UNIFI-ACCOUNT.md](docs/UNIFI-ACCOUNT.md) for the service identity, and [CONFIGURATION.md](docs/CONFIGURATION.md) for every setting. Optional integrations are documented in [ENCRYPTION.md](docs/ENCRYPTION.md), [STORAGE.md](docs/STORAGE.md), [MICROSOFT-GRAPH.md](docs/MICROSOFT-GRAPH.md), [NOTIFICATIONS.md](docs/NOTIFICATIONS.md), [WEBHOOKS.md](docs/WEBHOOKS.md), and [MONITORING.md](docs/MONITORING.md). See [CATALOG.md](docs/CATALOG.md) for the inventory schema.
 
@@ -129,7 +138,7 @@ See [SECURITY.md](SECURITY.md) for reporting and [docs/SECURITY.md](docs/SECURIT
 
 ## Project status
 
-Version 1.3.0. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
+Development source version 1.4.0-dev; latest verified published version v1.3.0. This is an independent community project and is not affiliated with or supported by Ubiquiti, Microsoft, Amazon Web Services, Auvik, age, or ntfy.
 
 ## License
 

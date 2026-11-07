@@ -1,8 +1,32 @@
 # Configuration
 
-Production configuration is trusted root-owned Bash assignment syntax in `/etc/unifi-backup/unifi-backup.env`. Do not put it in the repository. Use quoted literal assignments only; because the file is sourced by a root process, anyone able to modify it already has root-equivalent code execution.
+The optional terminal manager is the preferred 1.4 development configuration experience:
 
-Required permissions:
+```bash
+sudo unifi-backup-configure
+sudo unifi-backup-configure --validate --json
+sudo unifi-backup-configure --inspect --json
+```
+
+Read [CONFIGURE.md](CONFIGURE.md) for guided/existing setup, navigation, every section, explicit tests, transactional apply, rollback and systemd handling. Production backup operation still works with manually maintained files and does not require the wizard or dialog.
+
+## Single reference and file layout
+
+[CONFIGURATION-REFERENCE.md](CONFIGURATION-REFERENCE.md) is generated from `lib/ub/config_schema.py` using `unifi-backup-configure --reference`. It maps managed keys to source files, runtime defaults, consumers, types/limits, sensitivity, dependencies and legacy status. Examples use fictitious placeholders, not necessarily runtime defaults. Do not duplicate this setting table in other documents.
+
+Configuration remains physically separated for independent credential lifecycles:
+
+- Main: `/etc/unifi-backup/unifi-backup.env`.
+- Enabled Graph, legacy storage, ntfy and webhook integrations: their referenced protected env files.
+- Independent targets: `BACKUP_TARGET_CONFIG_DIR/ID.env`; only IDs in `BACKUP_TARGETS` are active.
+- Age: a separate public-recipient file; private recovery identities are not managed.
+- Scheduling and custom access/config paths: narrow manager-owned systemd drop-ins, not shell variables.
+
+Existing custom references remain supported. Nonempty `BACKUP_TARGETS` overrides legacy `REMOTE_STORAGE_TYPE`/`STORAGE_CONFIG_FILE`; no automatic merge, credential copy or legacy activation occurs. Local storage always remains enabled. Retry backoff/limits are global while each task retains its own target and due time. A target can explicitly override the inherited remote download safety limit.
+
+## Manual configuration and trust
+
+Existing engine configuration is trusted root-owned Bash assignment syntax, sourced by root after permission/read-lock checks. Anyone who can modify it already has root-equivalent authority. Keep it outside Git. Prefer literal assignments: the manager refuses executable expressions, expansions, includes, arrays and unsupported syntax instead of evaluating or overwriting them. It preserves unknown literals and comments where safe; those unknown values are not included in diagnostics.
 
 ```bash
 sudo chown root:root /etc/unifi-backup
@@ -11,111 +35,16 @@ sudo chown root:root /etc/unifi-backup/*.env
 sudo chmod 0600 /etc/unifi-backup/*.env
 ```
 
-## Settings
+Apply the same root:root/0700/0600 contract to custom secret directories/files and targets.d. Do not indiscriminately chmod external CA stores or private recovery key collections. Do not edit files concurrently with a manager transaction; reload when a conflict is reported. The installer/updater pre-creates the private shared configuration lock, so hardened services need only read access to it. Pending interrupted transactions must be recovered before normal operations.
 
-The additive 1.3 settings preserve 1.2 defaults. See the complete commented main example for literal defaults. New commands share the protected Bash config loader and the same operation lock.
+No insecure TLS mode exists. For a private CA, install the verified public PEM chain and configure its absolute path. The manager checks ownership/path safety and PEM loading; the existing curl path uses normal verification and `--cacert`. A valid certificate file alone does not establish that the endpoint hostname or credentials work; use an explicit live login check.
 
-| Variable | Default/example | Meaning |
-|---|---|---|
-| `UNIFI_URL` | `https://unifi.example.invalid:11443` | HTTPS origin only; no path, query, fragment, or embedded credentials |
-| `UNIFI_USERNAME` | `uni-bck` | Dedicated local UniFi backup admin |
-| `UNIFI_PASSWORD` | none | Account password; required |
-| `BACKUP_DIR` | `/var/backups/unifi` | Absolute non-root destination |
-| `RETENTION_DAYS` | `35` | Maximum age in days; zero disables age deletion |
-| `RETENTION_COUNT` | `0` | Maximum number retained; zero disables the count limit |
-| `RETENTION_MIN_COUNT` | `1` | Newest backups always preserved despite age |
-| `MIN_BACKUP_SIZE` | `10000` | Minimum accepted response bytes |
-| `CURL_CONNECT_TIMEOUT` | `15` | Connection timeout in seconds |
-| `CURL_MAX_TIME` | `1800` | Total request timeout in seconds |
-| `BACKUP_DOWNLOAD_RETRIES` | `1` | Additional attempts after a transient/error-like download; maximum 3 |
-| `BACKUP_RETRY_DELAY` | `15` | Delay between attempts; each retry authenticates again |
-| `UNIFI_CA_CERT` | empty | Absolute PEM CA-chain file for a private CA |
-| `LOG_FORMAT` | `text` | `text` or compact newline-delimited `json` |
-| `STATUS_FILE` | `/var/lib/unifi-backup/status.json` | Atomically maintained non-secret monitoring state |
-| `ENCRYPTION_TYPE` | `none` | `none` or optional `age` encryption at rest |
-| `AGE_RECIPIENTS_FILE` | `/etc/unifi-backup/age-recipients.txt` | Root-owned file containing public recipients only |
-| `CATALOG_FILE` | `/var/lib/unifi-backup/catalog.json` | Atomic inventory of managed backups and metadata |
-| `STALE_WARNING_HOURS` | `192` | Freshness warning threshold used by the hourly monitor |
-| `STALE_CRITICAL_HOURS` | `216` | Freshness critical threshold; must exceed warning |
-| `NOTIFY_ON_STALE` | `true` | Notify once on stale status transitions and recovery |
-| `ENABLE_EMAIL` | `false` | Exactly `true` or `false` |
-| `GRAPH_CONFIG_FILE` | `/etc/unifi-backup/graph.env` | Graph secret file |
-| `REMOTE_STORAGE_TYPE` | `none` | `none`, `azure_blob`, or `s3` |
-| `STORAGE_CONFIG_FILE` | `/etc/unifi-backup/storage.env` | Azure/S3 secret file |
-| `REMOTE_UPLOAD_REQUIRED` | `true` | Fail the run when enabled remote storage fails |
-| `ENABLE_NTFY` | `false` | Enable ntfy status notifications |
-| `NTFY_CONFIG_FILE` | `/etc/unifi-backup/ntfy.env` | ntfy secret file |
-| `ENABLE_WEBHOOK` | `false` | Enable the generic HTTPS JSON webhook |
-| `WEBHOOK_CONFIG_FILE` | `/etc/unifi-backup/webhook.env` | Webhook URL/authentication secret file |
-| `NOTIFY_ON_SUCCESS` | `false` | Send routine success notifications |
-| `NOTIFY_ON_FAILURE` | `true` | Notify when a tracked backup run fails |
-| `NOTIFY_ON_RECOVERY` | `true` | Notify once after a failure is followed by success |
-| `LOCK_FILE` | `/run/unifi-backup/unifi-backup.lock` | Lock in the private runtime directory |
-| `VERIFY_ENABLED` | `false` | Post-creation/scheduled repeated verification |
-| `VERIFY_DECRYPT_CHECK` | `false` | Scheduled age decryption check |
-| `VERIFY_IDENTITY_FILE` | empty | Protected, operator-supplied age identity for that check |
-| `BACKUP_TARGETS` | empty | Space-separated target IDs; overrides legacy remote target |
-| `BACKUP_TARGET_CONFIG_DIR` | `/etc/unifi-backup/targets.d` | Root-owned mode-0700 target configuration directory |
-| `BACKUP_REQUIRED_TARGETS` | `0` | Minimum successful remote targets, excluding local; required targets must also pass |
-| `REMOTE_VERIFY_ENABLED` | `false` | Opt-in scheduled full remote verification |
-| `RETRY_ENABLED` | `false` | Opt-in scheduled persistent queue worker |
-| `RETRY_MAX_ATTEMPTS` | `8` | Total upload attempts, including initial attempt |
-| `RETRY_BASE_INTERVAL` | `300` | Initial backoff seconds |
-| `RETRY_MAX_INTERVAL` | `86400` | Backoff cap seconds |
-| `RETRY_MAX_AGE_DAYS` | `7` | Active task age cap; exhausted tasks dead-letter and unpin |
-| `RETRY_QUEUE_LIMIT` | `1000` | Maximum pending tasks and retained terminal records |
-| `RETENTION_MODE` | `legacy` | `legacy` or opt-in `gfs` |
-| `GFS_DAILY/WEEKLY/MONTHLY/YEARLY` | `0` | Numbers of distinct UTC periods protected in GFS mode |
-| `RESTORE_STAGING_DIR` | `/var/lib/unifi-backup/restore` | Private mode-0700 preparation destination |
-| `RESTORE_MAX_BYTES` | `10737418240` | Maximum downloaded/decrypted backup bytes |
-| `ANOMALY_ENABLED` | `false` | Optional post-backup analysis |
-| `ANOMALY_BASELINE/MIN_SAMPLES` | `20` / `5` | Comparable historical sample window/minimum |
-| `ANOMALY_SIZE_PERCENT` | `50` | Minimum median-relative size deviation percent |
-| `ANOMALY_DURATION_PERCENT` | `200` | Timing increase percent threshold |
-| `ANOMALY_IDENTICAL_COUNT` | `0` | Optional repeated plaintext hash streak threshold; zero disables |
-| `ANOMALY_FAILURE_STREAK` | `3` | Consecutive same-category operational failures |
-| `ANOMALY_HISTORY_LIMIT` | `200` | Bounded persisted run history |
-| `DIFF_ENABLED` | `false` | Optional latest-two normalized-export comparison |
+## Paths and systemd
 
-Target files independently define provider, required status, verification level, credentials and timeouts. Retry scheduling/limits are installation-wide so a single bounded worker controls total pressure; all tasks retain their own target ID, attempts and due time. See [MULTI-TARGET.md](MULTI-TARGET.md), [RETRIES.md](RETRIES.md), and [IMMUTABILITY.md](IMMUTABILITY.md) for exact policy semantics.
+The packaged sandbox writes only to its default backup/runtime/state locations. Merely changing BACKUP_DIR does not make it writable in a service. The manager validates dedicated private paths and prepares narrow additive service overrides for the backup, maintenance workers and monitor as needed, retaining ProtectSystem/ProtectHome/capability restrictions.
 
-See [ENCRYPTION.md](ENCRYPTION.md), [RETENTION.md](RETENTION.md), [STORAGE.md](STORAGE.md), [MONITORING.md](MONITORING.md), [METADATA.md](METADATA.md), [CATALOG.md](CATALOG.md), [NOTIFICATIONS.md](NOTIFICATIONS.md), and [WEBHOOKS.md](WEBHOOKS.md) for detailed semantics.
+For manual changes, review all affected services, including verification, retry and monitor, not just the main backup unit. Use systemd drop-ins, never edit packaged units or allow writes to a broad system root. Avoid home/temporary paths hidden by ProtectHome/PrivateTmp. Keep status.json/catalog.json directly below /var/lib/unifi-backup or BACKUP_DIR as required by the engine. The operation lock must be directly below /run/unifi-backup or BACKUP_DIR with a safe .lock basename.
 
-For symlink safety, `LOCK_FILE` must be directly below `/run/unifi-backup` or directly inside `BACKUP_DIR`, and its basename must end in `.lock`. The runtime directory is forced to mode 0700 before the file is opened. The systemd service creates `/run/unifi-backup` with `RuntimeDirectory=` and preserves it across oneshot exits so service and manual runs always contend on the same lock; `/run` is cleared on reboot. Manual runs create it when needed.
+The default calendar remains Sunday at 03:00 local time with Persistent=true. Validate a replacement using `systemd-analyze calendar EXPRESSION`; daily, weekly and custom calendars are supported by the wizard. Daemon-reload alone does not restart an active timer. Deliberately review and restart/activate the desired timer; Persistent activation may immediately run an overdue job.
 
-The script requires HTTPS and has no insecure mode. For a private CA, store its public CA chain outside Git and set:
-
-```bash
-UNIFI_CA_CERT="/etc/unifi-backup/ca/unifi-ca.pem"
-```
-
-Do not use `curl -k`, `--insecure`, or a certificate without verifying its issuer and hostname.
-
-## Custom backup directory
-
-The systemd sandbox permits writes only to `/var/backups/unifi` by default. If `BACKUP_DIR` changes, add a matching service override:
-
-```bash
-sudo systemctl edit unifi-backup.service
-```
-
-```ini
-[Service]
-ReadWritePaths=
-ReadWritePaths=/srv/secure-backups/unifi /run/unifi-backup /var/lib/unifi-backup
-```
-
-Then create the directory as root with mode 0700 and run `sudo systemctl daemon-reload`. Do not make a home directory the destination; `ProtectHome=true` intentionally blocks it.
-
-If `STATUS_FILE` is also moved outside `/var/lib/unifi-backup`, add its parent to `ReadWritePaths` in a separate `unifi-backup-monitor.service` override as well. Keep `CATALOG_FILE` directly under `/var/lib/unifi-backup` unless a deliberate service override permits another validated path.
-
-## Schedule
-
-The shipped timer runs Sunday at 03:00 local time. It has no randomized delay because one host does not create a fleet thundering herd. A large deployment can add:
-
-```ini
-[Timer]
-RandomizedDelaySec=30m
-```
-
-Use `systemd-analyze calendar 'Sun *-*-* 03:00:00'` and `systemctl list-timers unifi-backup.timer` to inspect the schedule.
+For deeper feature semantics see [ENCRYPTION.md](ENCRYPTION.md), [RETENTION.md](RETENTION.md), [STORAGE.md](STORAGE.md), [MULTI-TARGET.md](MULTI-TARGET.md), [MONITORING.md](MONITORING.md), [METADATA.md](METADATA.md), [CATALOG.md](CATALOG.md), [NOTIFICATIONS.md](NOTIFICATIONS.md), [WEBHOOKS.md](WEBHOOKS.md), [RETRIES.md](RETRIES.md) and [IMMUTABILITY.md](IMMUTABILITY.md).

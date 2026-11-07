@@ -6,6 +6,10 @@ The root service reads local secrets, talks to a configured UniFi HTTPS origin a
 
 ## Controls
 
+- Configuration management parses literals without eval/sourcing. Existing comments and unknown literals are preserved; executable syntax is refused. Dialog parameters travel through an anonymous file descriptor, sensitive inputs are never prefilled, and diagnostic/review values are redacted.
+- Apply uses a private durable journal, configuration/operation locks, dependency fingerprints, per-file atomic replacement and pending-reader protection. Cross-file atomicity is not claimed. Recovery checks preimages and refuses later operator edits. Journals contain old secrets and require credential-grade protection/retention.
+- New systemd drop-ins retain hardening and grant only reviewed private paths. The pre-created configuration lock is opened read-only by hardened services. Provider inspections/tests are explicitly read-only and opt-in; the wizard never generates private identities or changes cloud permissions.
+
 - New maintenance operations load protected Bash assignments, transport credentials over stdin to shared data modules, and serialize with the backup/retention lock.
 - Provider requests disable curl's automatic rc file, require HTTPS, reject redirects and unsafe object names, and place signed URLs/headers in private temporary files.
 - Full remote checks hash downloaded bytes. Conditional-write conflicts are accepted only after content identity checks; metadata snapshots must identify the same original backup.

@@ -41,6 +41,8 @@ check_secret_file() {
 for command_name in python3 stat mktemp; do command -v "$command_name" >/dev/null 2>&1 || die "Required command not found: $command_name" 3; done
 check_secret_file "$CONFIG_FILE"
 # shellcheck disable=SC1090
+ub_configuration_read_lock "$CONFIG_FILE"
+# shellcheck disable=SC1090
 source "$CONFIG_FILE"
 : "${LOG_FORMAT:=text}" "${STATUS_FILE:=/var/lib/unifi-backup/status.json}"
 : "${STALE_WARNING_HOURS:=192}" "${STALE_CRITICAL_HOURS:=216}" "${NOTIFY_ON_STALE:=true}"

@@ -1,5 +1,7 @@
 # Exit codes
 
+The 1.4 configuration manager follows the same ranges, with 65 for unsafe/unsupported syntax, 69 for missing UI/system tools, 73 for apply failure with completed rollback, 75 for write conflicts/locks or incomplete rollback, 77 for manager ownership/path security violations, and 78 for invalid configuration. Offline JSON validation distinguishes error categories and warnings. Backup/live-helper and monitoring codes retain their existing meanings. See [CONFIGURE.md](CONFIGURE.md).
+
 The commands use the established BSD `sysexits` range where practical. Monitoring status uses the separate Nagios convention documented below.
 
 | Code | Name/category | Typical meaning |

@@ -1,5 +1,17 @@
 # Upgrading
 
+## Reviewed development update: 1.3.0 to 1.4.0-dev
+
+This is a compatible MINOR feature update prepared for review, not a published 1.4 tag/release. After checking out the reviewed changes, run `sudo ./update.sh`, then `unifi-backup --version` and `unifi-backup-configure --version` (both report 1.4.0-dev). No commit, tag or publication is required to review/test this tree.
+
+The updater preserves all existing env/recipient files, independent targets, backups, catalog and monitoring data. It installs the optional manager and pre-creates `.configure.lock` for read-only access by hardened services. Allow any jobs started by older binaries to finish before the first configuration transaction. No wizard, parser conversion, storage migration, timer activation or destructive operation is run automatically.
+
+Install `dialog` only if the UI is desired, then run `sudo unifi-backup-configure`. Its stricter safe-literal/permission/dependency checks may require correcting old manual syntax before manager editing; this does not make the wizard mandatory for working existing backups. Start with `--inspect --json` and `--validate`; live login/provider/notification tests remain explicit.
+
+No physical file-layout migration is required. Legacy credentials are not copied/activated automatically, and disabled target files are retained. New drop-ins affect only reviewed schedule/config-path/write-access choices and retain service hardening. See [CONFIGURE.md](CONFIGURE.md) for configuration rollback and the private transaction journal.
+
+Before reverting application code to the published v1.3.0, finish/recover any pending transaction, stop conflicting operations and preserve configuration/journals. Old binaries do not honor the new pending marker/configuration lock. Review/remove only manager-owned overrides if reverting related path/schedule choices; do not remove administrator overrides or pending retry sources. The existing v1.3.0 updater can reinstall that version after this review. Do not run configuration transactions concurrently with old readers.
+
 ## Upgrade 1.2.0 source to the published 1.3.0 release
 
 Origin had no published release/tag before 1.3.0; the preceding source version was 1.2.0 at `0d96e1f`. The updater continues to install the currently checked-out source. It does not fetch or choose a release itself.

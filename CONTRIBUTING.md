@@ -6,7 +6,10 @@ Before opening a pull request:
 
 ```bash
 bash tests/run.sh
+python3 -m unittest discover -s tests -p 'test_*.py' -v
 shellcheck install.sh update.sh uninstall.sh bin/* lib/*.sh tests/*.sh tests/fixtures/mock-*
+python3 -m compileall -q lib/ub
+git diff --check
 ```
 
 Explain security consequences, compatibility assumptions, and manual tests. Changes to authentication, endpoints, deletion, encryption, filesystem paths, curl arguments, systemd hardening, Graph permissions, object-storage signing, notifications/webhooks, monitoring exposure, catalog schemas, or secret handling require explicit security review.

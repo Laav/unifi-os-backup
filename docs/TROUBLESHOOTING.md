@@ -1,5 +1,11 @@
 # Troubleshooting
 
+## Configuration manager
+
+For the 1.4 development tree use `sudo unifi-backup-configure --validate --json` or a non-mutating `--inspect`. The full wizard requires optional dialog, a real TTY and at least 60x18; use `ssh -t` when needed. Unsupported shell expressions are deliberately refused rather than executed. Insecure ownership/modes and symlinks must be corrected explicitly.
+
+An active configuration lock returns 75; wait and reload instead of deleting the lock inode. An interrupted multi-file apply leaves a private pending marker and blocks updated readers: use `sudo unifi-backup-configure --recover --yes` with the same `--config` path. Never remove the marker to bypass recovery. Custom schedules require `systemd-analyze`, and custom directories must be compatible with the hardened units. See [CONFIGURE.md](CONFIGURE.md) for rollback, overrides and explicit timer activation.
+
 ## Endpoint compatibility
 
 The repository uses:

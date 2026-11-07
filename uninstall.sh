@@ -15,11 +15,11 @@ for extra in verify remote-verify retry; do
   systemctl stop "unifi-backup-$extra.service" >/dev/null 2>&1 || true
   rm -f -- "/etc/systemd/system/unifi-backup-$extra.service" "/etc/systemd/system/unifi-backup-$extra.timer"
 done
-for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff; do
+for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff configure; do
   rm -f -- "/usr/local/sbin/unifi-backup-$helper"
 done
 rm -f -- /usr/local/lib/unifi-backup/unifi-backup-runtime.sh
-for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli; do
+for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli config_schema config_files config_model config_transaction config_ui configure; do
   rm -f -- "/usr/local/lib/unifi-backup/ub/$module.py"
 done
 for cached in /usr/local/lib/unifi-backup/ub/__pycache__/*.pyc; do
@@ -37,6 +37,16 @@ rm -f -- /etc/systemd/system/unifi-backup-monitor.service /etc/systemd/system/un
 systemctl daemon-reload
 
 if [[ $PURGE == "true" ]]; then
+  # Only remove our own exact drop-in filename/header. Other administrator
+  # overrides are never recursively deleted. Ordinary removal retains these.
+  for unit in unifi-backup.timer unifi-backup.service unifi-backup-monitor.service unifi-backup-verify.service unifi-backup-remote-verify.service unifi-backup-retry.service; do
+    dropin="/etc/systemd/system/$unit.d/90-unifi-backup-configure.conf"
+    if [[ -f $dropin && ! -L $dropin && ! -L ${dropin%/*} ]] && head -n 1 "$dropin" | grep -Fxq '# Managed by unifi-backup-configure; edit through the manager.'; then
+      rm -f -- "$dropin"
+      rmdir -- "${dropin%/*}" >/dev/null 2>&1 || true
+    fi
+  done
+  systemctl daemon-reload
   config_dir=/etc/unifi-backup
   backup_dir=/var/backups/unifi
   state_dir=/var/lib/unifi-backup

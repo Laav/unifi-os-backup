@@ -65,6 +65,41 @@ ub_is_positive_int() { [[ $1 =~ ^[1-9][0-9]*$ ]]; }
 ub_is_nonnegative_int() { [[ $1 =~ ^[0-9]+$ ]]; }
 ub_is_bool() { [[ $1 == "true" || $1 == "false" ]]; }
 
+# Updated readers hold a shared configuration lock before sourcing any file.
+# Configuration apply takes the exclusive lock, then the existing operation
+# lock. Nested helpers inherit descriptor 8; production is Linux/flock.
+ub_configuration_read_lock() {
+  local parent=${1%/*} current
+  [[ $(uname -s) == Linux ]] || return 0
+  current=$parent
+  while [[ $current != / && -n $current ]]; do
+    [[ ! -L $current ]] || { echo 'Unsafe configuration ancestor' >&2; return 78; }
+    current=${current%/*}
+  done
+  [[ ! -L $parent/.configure.lock ]] || return 78
+  if [[ ! -e $parent/.configure.lock ]]; then
+    # Installed services have ProtectSystem=strict. The installer/updater
+    # creates this inode; manual test/custom configs may create it on first use.
+    (umask 077; set -o noclobber; : >"$parent/.configure.lock") 2>/dev/null || [[ -f $parent/.configure.lock ]] || {
+      echo 'Configuration read lock is missing; rerun the installer/updater or initialize it as root' >&2
+      return 78
+    }
+  fi
+  if [[ ${UB_CONFIG_READ_LOCK_PATH:-} != "$parent/.configure.lock" || ! -e /proc/$$/fd/8 ]]; then
+    exec 8<"$parent/.configure.lock"
+    flock -sn 8 || { echo 'Configuration is being changed; retry later' >&2; return 75; }
+    UB_CONFIG_READ_LOCK_PATH="$parent/.configure.lock"
+    export UB_CONFIG_READ_LOCK_PATH
+  else
+    [[ $(stat -Lc '%d:%i' /proc/$$/fd/8) == "$(stat -Lc '%d:%i' "$parent/.configure.lock")" ]] || return 75
+    flock -sn 8 || return 75
+  fi
+  [[ ! -e $parent/.configure-pending && ! -L $parent/.configure-pending ]] || {
+    echo 'Interrupted configuration transaction: run sudo unifi-backup-configure --recover --yes' >&2
+    return 78
+  }
+}
+
 ub_describe_curl_error() {
   case "$1" in
     5|6) echo "DNS resolution failed" ;;

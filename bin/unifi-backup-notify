@@ -66,6 +66,8 @@ for command_name in curl python3 stat hostname mktemp; do
 done
 check_secret_file "$CONFIG_FILE"
 # shellcheck disable=SC1090
+ub_configuration_read_lock "$CONFIG_FILE"
+# shellcheck disable=SC1090
 source "$CONFIG_FILE"
 : "${LOG_FORMAT:=text}" "${STATUS_FILE:=/var/lib/unifi-backup/status.json}" "${UNIFI_URL:=}"
 : "${ENABLE_NTFY:=false}" "${NTFY_CONFIG_FILE:=/etc/unifi-backup/ntfy.env}"

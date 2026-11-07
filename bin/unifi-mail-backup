@@ -65,6 +65,8 @@ for command_name in curl python3 stat sha256sum hostname; do
 done
 check_secret_file "$CONFIG_FILE"
 # shellcheck disable=SC1090
+ub_configuration_read_lock "$CONFIG_FILE"
+# shellcheck disable=SC1090
 source "$CONFIG_FILE"
 GRAPH_CONFIG_FILE=${GRAPH_CONFIG_OVERRIDE:-${GRAPH_CONFIG_FILE:-/etc/unifi-backup/graph.env}}
 check_secret_file "$GRAPH_CONFIG_FILE"

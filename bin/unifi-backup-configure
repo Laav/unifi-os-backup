@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+module="$script_dir/../lib/ub/configure.py"
+[[ -f $module ]] || module=/usr/local/lib/unifi-backup/ub/configure.py
+command -v python3 >/dev/null 2>&1 || { echo 'unifi-backup-configure: python3 is required' >&2; exit 69; }
+exec python3 "$module" "$@"

@@ -4,6 +4,9 @@ umask 077
 
 die() { echo "unifi-os-backup updater: ERROR: $*" >&2; exit 1; }
 (( EUID == 0 )) || die "run as root (sudo ./update.sh)"
+for protected in /etc/unifi-backup /etc/unifi-backup/targets.d /etc/unifi-backup/.configure.lock /etc/unifi-backup/unifi-backup.env /etc/unifi-backup/graph.env /etc/unifi-backup/storage.env /etc/unifi-backup/ntfy.env /etc/unifi-backup/webhook.env /etc/unifi-backup/age-recipients.txt; do
+  [[ ! -L $protected ]] || die "configuration symlink refused"
+done
 source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 for file in bin/unifi-backup bin/unifi-mail-backup bin/unifi-backup-check bin/unifi-backup-upload bin/unifi-backup-notify bin/unifi-backup-status bin/unifi-backup-monitor bin/unifi-backup-catalog lib/unifi-backup-common.sh config/storage.env.example config/ntfy.env.example config/webhook.env.example config/age-recipients.txt.example systemd/unifi-backup.service systemd/unifi-backup.timer systemd/unifi-backup-monitor.service systemd/unifi-backup-monitor.timer; do
   [[ -f $source_dir/$file ]] || die "missing source file: $file"
@@ -13,11 +16,11 @@ for script in "$source_dir/bin/unifi-backup" "$source_dir/bin/unifi-mail-backup"
 done
 
 # Existing configuration and backup data are deliberately never replaced or removed.
-for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli; do
+for module in core verify storage replication retry_queue policy retention recovery anomaly config_diff cli config_schema config_files config_model config_transaction config_ui configure; do
   [[ -f $source_dir/lib/ub/$module.py ]] || die "Missing data module: $module"
 done
 bash -n "$source_dir/lib/unifi-backup-runtime.sh"
-for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff; do
+for helper in verify replicate remote-verify retry storage-policy retention restore analyze diff configure; do
   [[ -f $source_dir/bin/unifi-backup-$helper ]] || die "Missing helper: $helper"
   bash -n "$source_dir/bin/unifi-backup-$helper"
   install -o root -g root -m 0755 "$source_dir/bin/unifi-backup-$helper" "/usr/local/sbin/unifi-backup-$helper"
@@ -50,6 +53,10 @@ install -o root -g root -m 0644 "$source_dir/systemd/unifi-backup-monitor.timer"
 # Existing configuration is never replaced. New optional secret-file examples
 # are installed only when their destination does not exist.
 install -d -o root -g root -m 0700 /etc/unifi-backup
+[[ ! -L /etc/unifi-backup/.configure.lock ]] || die "unsafe configuration lock symlink"
+if [[ ! -e /etc/unifi-backup/.configure.lock ]]; then
+  install -o root -g root -m 0600 /dev/null /etc/unifi-backup/.configure.lock
+fi
 for optional_config in storage ntfy webhook; do
   destination="/etc/unifi-backup/${optional_config}.env"
   if [[ ! -e $destination ]]; then
@@ -67,4 +74,6 @@ systemctl enable unifi-backup-monitor.timer >/dev/null 2>&1 || true
 systemctl try-restart unifi-backup-monitor.timer >/dev/null 2>&1 || true
 echo "Update installed. Configuration and backups were preserved."
 echo "Review CHANGELOG.md and merge new options from config/*.example as needed."
+echo "Optional configuration manager: sudo unifi-backup-configure (requires dialog only for the UI)."
+echo "No migration or wizard is run by updating. Offline validation: sudo unifi-backup-configure --validate"
 echo "Then run: sudo unifi-backup-check --live && sudo systemctl start unifi-backup.service"

@@ -2,6 +2,8 @@
 
 This policy applies permanently to every substantive project release: features, important bug/security fixes, backup/metadata-format changes, installer/updater behavior and other meaningful user-facing changes. Editorial-only documentation changes do not automatically need a new distribution version.
 
+Release publication is an authorized maintainer action, not an automatic side effect of an implementation/review task. When instructed not to push/tag/publish, prepare an explicitly unreleased development version and leave a reviewable worktree. Never infer publication permission from this checklist. The configuration-manager worktree uses 1.4.0-dev for the prospective compatible MINOR release; v1.3.0 remains the verified published release until separately authorized publication.
+
 1. Check branch, clean/understood worktree, exact origin URL and maintainer permissions. Fetch origin and tags. Inspect GitHub Releases and tags as well as README, CHANGELOG and CLI versions. Never assume a suggested version is the published version.
 2. Choose SemVer: PATCH for compatible fixes, MINOR for compatible new functionality, MAJOR for real breaking changes. Never reuse an existing version/tag/release.
 3. Update `bin/unifi-backup`'s VERSION, `lib/ub/core.py`'s VERSION, README, changelog, current documentation and version assertions consistently. Record factual features and limitations only.

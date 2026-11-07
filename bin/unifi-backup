@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 PROGRAM="unifi-backup"
-VERSION="1.3.0"
+VERSION="1.4.0-dev"
 CONFIG_FILE="/etc/unifi-backup/unifi-backup.env"
 MODE="backup"
 
@@ -97,6 +97,7 @@ check_secret_file() {
 }
 
 check_secret_file "$CONFIG_FILE"
+ub_configuration_read_lock "$CONFIG_FILE"
 # The configuration is trusted root-owned shell syntax. It is intentionally kept
 # outside the repository and checked before sourcing.
 # shellcheck disable=SC1090

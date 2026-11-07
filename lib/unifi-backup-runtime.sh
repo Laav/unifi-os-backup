@@ -27,6 +27,13 @@ ub_runtime() {
     }
   }
   ub_private_file "$ub_config" || return $?
+  if ! declare -F ub_configuration_read_lock >/dev/null; then
+    local ub_common="$ub_lib/unifi-backup-common.sh"
+    [[ -r $ub_common ]] || ub_common="$ub_lib/common.sh"
+    # shellcheck disable=SC1090
+    source "$ub_common"
+  fi
+  ub_configuration_read_lock "$ub_config" || return $?
   # shellcheck disable=SC1090
   source "$ub_config"
   local ub_lock=${LOCK_FILE:-/run/unifi-backup/unifi-backup.lock}

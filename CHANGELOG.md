@@ -4,6 +4,24 @@ All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.
 
 ## [Unreleased]
 
+Target: compatible MINOR version 1.4.0; development commands report `1.4.0-dev`. No tag or release has been created for this change.
+
+### Added
+
+- Optional `unifi-backup-configure` full-screen dialog UI with guided setup, section editing, independent destinations, notifications, scheduling, monitoring/advanced settings and explicit review/apply.
+- Standard-library declarative configuration schema, generated complete inventory, shared advanced-engine validation, and noninteractive redacted `--inspect`/`--dry-run` and offline `--validate` commands.
+- Literal-only Bash parser/serializer preserving comments and unknown literal settings without executing expansions, commands or eval.
+- Private staged configuration transactions with preimages, optimistic dependency conflict checks, signal rollback, persistent recovery markers and explicit recovery/rollback commands.
+- Narrow manager-owned systemd calendar/config-path/write-access drop-ins, read-only provider tests and explicit timer management.
+- Mockable UI, real Linux PTY/dialog, lifecycle-script sandbox, parser/security/concurrency/rollback and reader-lock regression tests.
+
+### Changed
+
+- Updated engine readers share a configuration lock before sourcing; pending interrupted transactions fail closed. Services open the pre-created lock read-only, compatible with ProtectSystem=strict.
+- Installer offers `--configure`, while unattended installation and updating remain noninteractive and preserve existing configuration. No automatic storage migration or target activation.
+- Configuration management rejects symlinks, unsafe permissions and systemd-inaccessible/broad writable paths without weakening packaged hardening.
+- Legacy single-target configuration remains supported; switching storage modes requires an explicit choice, preventing dormant legacy reactivation.
+
 ## [1.3.0] - 2026-10-24
 
 ### Added
